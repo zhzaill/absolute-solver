@@ -18,14 +18,17 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, mpsc, Mutex};
 
 use absolute_solver::{
     adapters::{decode_wav_pcm16, AdapterConfig, ModelAdapters},
     cortico::CorticoEvent,
     memory::{MemoryError, MemoryHit, MemoryStore, MemoryWriteRequest},
     now_ms, state_payload, trace_event_for_turn,
-    wire::{decode_client_message, HubState, Message, StateName, WireEnvelope},
+    wire::{
+        decode_client_message, BinaryMediaFrame, BinaryMediaKind, HubState, Message, StateName,
+        WireDecodeError, WireEnvelope,
+    },
     SharedTrace, TraceWriter,
 };
 
@@ -61,6 +64,12 @@ struct PendingAudio {
     sample_rate: u32,
     truncated: bool,
     invalid: bool,
+}
+
+#[derive(Default)]
+struct ConnectionDelivery {
+    device_id: Option<String>,
+    binary_audio: bool,
 }
 
 const MAX_TURN_AUDIO_BYTES: usize = 5 * 1024 * 1024;
@@ -330,6 +339,8 @@ impl Monitor {
             Message::SpeechEnd { turn, .. } => ("speech.end", Some(*turn), None, 0),
             Message::RenderCue { turn, .. } => ("render.cue", *turn, None, 0),
             Message::BodyHandoff { .. } => ("body.handoff", None, None, 0),
+            Message::TurnStarted { turn } => ("turn.started", Some(*turn), None, 0),
+            Message::ProtocolError { .. } => ("protocol.error", None, None, 0),
         };
         let turn = turn_override.or(message_turn);
         if dir == "body->hub" {
@@ -346,6 +357,10 @@ impl Monitor {
         if matches!(message, Message::AudioUp { .. } | Message::Say { .. }) {
             self.audio_frames += 1;
             self.audio_bytes += bytes as u64;
+        }
+        if kind == "protocol.error" {
+            self.protocol_errors += 1;
+            self.last_error = Some(note.to_owned());
         }
         self.recent.push_back(MonitorEvent {
             ts: wall_ms(),
@@ -497,6 +512,185 @@ fn next_connected_body(
         .iter()
         .find(|(device_id, device)| device.connected && excluding != Some(device_id.as_str()))
         .map(|(device_id, _)| device_id.clone())
+}
+
+fn supports_binary_audio(caps: &serde_json::Value) -> bool {
+    caps.get("binary_audio")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+        || caps
+            .get("media")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|values| {
+                values
+                    .iter()
+                    .any(|value| value.as_str() == Some("pcm16-binary"))
+            })
+}
+
+fn prepare_connection_message(
+    message: Message,
+    binary_audio: bool,
+) -> (Message, Option<BinaryMediaFrame>) {
+    if !binary_audio {
+        return (message, None);
+    }
+    let (turn, seq, pcm_b64, sr, mouth, text) = match message {
+        Message::Say {
+            turn,
+            seq,
+            pcm_b64,
+            sr,
+            mouth,
+            text,
+            ..
+        } => (turn, seq, pcm_b64, sr, mouth, text),
+        other => return (other, None),
+    };
+    let Ok(pcm) = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &pcm_b64)
+    else {
+        return (
+            Message::Say {
+                turn,
+                seq,
+                pcm_b64,
+                sr,
+                mouth,
+                text,
+                media: None,
+            },
+            None,
+        );
+    };
+    (
+        Message::Say {
+            turn,
+            seq,
+            pcm_b64: String::new(),
+            sr,
+            mouth,
+            text,
+            media: Some("pcm16-binary".into()),
+        },
+        Some(BinaryMediaFrame {
+            kind: BinaryMediaKind::SayAudio,
+            turn,
+            seq,
+            sample_rate: sr,
+            pcm,
+        }),
+    )
+}
+
+async fn send_direct_message(
+    hub: &Hub,
+    sender: &mpsc::Sender<Message>,
+    message: Message,
+    note: impl Into<String>,
+) {
+    hub.record("hub->body", &message, message.turn(), note)
+        .await;
+    let _ = sender.send(message).await;
+}
+
+async fn ingest_audio_chunk(
+    hub: &Arc<Hub>,
+    message: &Message,
+    turn: u64,
+    seq: u64,
+    sample_rate: u32,
+    pcm: &[u8],
+    transport: &str,
+) -> Result<(), (&'static str, String)> {
+    if !(8_000..=96_000).contains(&sample_rate) {
+        return Err((
+            "invalid_audio",
+            format!("sample rate {sample_rate} is outside 8000..=96000"),
+        ));
+    }
+    if pcm.len() % 2 != 0 {
+        return Err((
+            "invalid_audio",
+            format!("PCM16 byte count is odd: {}", pcm.len()),
+        ));
+    }
+    if pcm.len() > MAX_TURN_AUDIO_BYTES {
+        return Err((
+            "audio_too_large",
+            format!("audio chunk exceeds {MAX_TURN_AUDIO_BYTES} bytes"),
+        ));
+    }
+    let current_turn = hub.state.lock().await.turn;
+    if turn < current_turn {
+        hub.record(
+            "body->hub",
+            message,
+            Some(turn),
+            format!("stale turn={turn}; current={current_turn}; dropped"),
+        )
+        .await;
+        return Err((
+            "stale_turn",
+            format!("turn {turn} is stale; current turn is {current_turn}"),
+        ));
+    }
+    if turn > current_turn {
+        let mut state = hub.state.lock().await;
+        state.turn = turn;
+        state.state = StateName::Listening;
+        state.since_ms = now_ms();
+        state.reason = "audio.up".into();
+    }
+    hub.audio
+        .lock()
+        .await
+        .retain(|pending_turn, _| *pending_turn >= turn);
+    hub.set_state(StateName::Listening, "audio.up").await;
+    hub.record(
+        "body->hub",
+        message,
+        Some(turn),
+        format!(
+            "{seq}: {} bytes at {sample_rate} Hz over {transport}",
+            pcm.len()
+        ),
+    )
+    .await;
+    let rate_changed = {
+        let mut audio = hub.audio.lock().await;
+        let pending = audio.entry(turn).or_insert_with(|| PendingAudio {
+            pcm: Vec::new(),
+            sample_rate,
+            truncated: false,
+            invalid: false,
+        });
+        let changed = pending.sample_rate != sample_rate;
+        if changed {
+            pending.invalid = true;
+        }
+        let remaining = MAX_TURN_AUDIO_BYTES.saturating_sub(pending.pcm.len());
+        if !changed {
+            let take = remaining.min(pcm.len());
+            pending.pcm.extend_from_slice(&pcm[..take]);
+            if take < pcm.len() {
+                pending.truncated = true;
+            }
+        }
+        changed
+    };
+    if rate_changed {
+        hub.record_system_for_turn(
+            "audio.sample_rate_changed",
+            format!("turn={turn}; new={sample_rate}"),
+            Some(turn),
+        )
+        .await;
+        return Err((
+            "invalid_audio",
+            "sample rate changed within the utterance".into(),
+        ));
+    }
+    Ok(())
 }
 
 async fn notify_body_handoff(hub: &Hub, active_body: Option<String>, reason: &str) {
@@ -1179,22 +1373,52 @@ async fn handle_socket(socket: WebSocket, hub: Arc<Hub>) {
     hub.record_system("connection.open", "websocket upgraded")
         .await;
     let (mut sender, mut receiver) = socket.split();
-    let body_slot = Arc::new(Mutex::new(None::<String>));
+    let connection_delivery = Arc::new(Mutex::new(ConnectionDelivery::default()));
+    let (direct_tx, mut direct_rx) = mpsc::channel::<Message>(32);
     let mut updates = hub.outbound.subscribe();
     let send_hub = hub.clone();
-    let send_body_slot = body_slot.clone();
+    let send_delivery = connection_delivery.clone();
     let send_task = tokio::spawn(async move {
-        while let Ok(message) = updates.recv().await {
-            let device_id = send_body_slot.lock().await.clone();
-            let active_body = send_hub.active_body.lock().await.clone();
-            if !body_receives_message(&message, device_id.as_deref(), active_body.as_deref()) {
-                continue;
-            }
+        loop {
+            let (message, from_broadcast) = tokio::select! {
+                direct = direct_rx.recv() => match direct {
+                    Some(message) => (message, false),
+                    None => break,
+                },
+                update = updates.recv() => match update {
+                    Ok(message) => (message, true),
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => break,
+                },
+            };
+            let binary_audio = {
+                let delivery = send_delivery.lock().await;
+                if from_broadcast
+                    && !body_receives_message(
+                        &message,
+                        delivery.device_id.as_deref(),
+                        send_hub.active_body.lock().await.as_deref(),
+                    )
+                {
+                    continue;
+                }
+                delivery.binary_audio
+            };
+            let (message, binary_frame) = prepare_connection_message(message, binary_audio);
             let Ok(text) = serde_json::to_string(&WireEnvelope::new(message)) else {
                 continue;
             };
             if sender.send(WsMessage::Text(text)).await.is_err() {
                 break;
+            }
+            if let Some(frame) = binary_frame {
+                if sender
+                    .send(WsMessage::Binary(frame.encode()))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
             }
         }
     });
@@ -1212,8 +1436,9 @@ async fn handle_socket(socket: WebSocket, hub: Arc<Hub>) {
                 break;
             }
         };
-        let text = match frame {
-            WsMessage::Text(text) => text,
+        let (text, binary) = match frame {
+            WsMessage::Text(text) => (Some(text), None),
+            WsMessage::Binary(bytes) => (None, Some(bytes)),
             WsMessage::Ping(_) | WsMessage::Pong(_) => {
                 let mut monitor = hub.monitor.lock().await;
                 monitor.last_activity_ms = Some(wall_ms());
@@ -1223,19 +1448,113 @@ async fn handle_socket(socket: WebSocket, hub: Arc<Hub>) {
                 continue;
             }
             WsMessage::Close(_) => break,
-            _ => continue,
         };
         if let Some(device_id) = &connected_device {
             hub.monitor.lock().await.set_device(device_id, true);
         }
+        if let Some(bytes) = binary {
+            let Some(device_id) = connected_device.as_deref() else {
+                send_direct_message(
+                    &hub,
+                    &direct_tx,
+                    Message::ProtocolError {
+                        code: "not_registered".into(),
+                        message: "hello is required before binary media".into(),
+                        fatal: false,
+                    },
+                    "binary media received before hello",
+                )
+                .await;
+                continue;
+            };
+            let frame = match BinaryMediaFrame::decode(&bytes) {
+                Ok(frame) => frame,
+                Err(error) => {
+                    send_direct_message(
+                        &hub,
+                        &direct_tx,
+                        Message::ProtocolError {
+                            code: "invalid_binary_media".into(),
+                            message: error.to_string(),
+                            fatal: false,
+                        },
+                        "invalid binary media frame",
+                    )
+                    .await;
+                    continue;
+                }
+            };
+            if frame.kind != BinaryMediaKind::AudioUp {
+                send_direct_message(
+                    &hub,
+                    &direct_tx,
+                    Message::ProtocolError {
+                        code: "invalid_binary_kind".into(),
+                        message: "body may only send audio.up binary frames".into(),
+                        fatal: false,
+                    },
+                    format!("device={device_id}; binary kind={:?}", frame.kind),
+                )
+                .await;
+                continue;
+            }
+            let message = Message::AudioUp {
+                turn: frame.turn,
+                seq: frame.seq,
+                pcm_b64: base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    &frame.pcm,
+                ),
+                sr: frame.sample_rate,
+            };
+            if let Err((code, detail)) = ingest_audio_chunk(
+                &hub,
+                &message,
+                frame.turn,
+                frame.seq,
+                frame.sample_rate,
+                &frame.pcm,
+                "pcm16-binary",
+            )
+            .await
+            {
+                send_direct_message(
+                    &hub,
+                    &direct_tx,
+                    Message::ProtocolError {
+                        code: code.into(),
+                        message: detail,
+                        fatal: false,
+                    },
+                    "binary audio rejected",
+                )
+                .await;
+            }
+            continue;
+        }
+        let text = text.expect("text frame is present when binary frame is absent");
         let message = match decode_client_message(&text) {
             Ok(message) => message,
             Err(error) => {
-                hub.monitor
-                    .lock()
-                    .await
-                    .record_error(format!("invalid message: {error}"));
+                let (code, fatal) = match &error {
+                    WireDecodeError::Json(_) => ("invalid_message", false),
+                    WireDecodeError::UnsupportedVersion { .. } => ("unsupported_version", true),
+                };
                 eprintln!("invalid message from body: {error}");
+                send_direct_message(
+                    &hub,
+                    &direct_tx,
+                    Message::ProtocolError {
+                        code: code.into(),
+                        message: error.to_string(),
+                        fatal,
+                    },
+                    "protocol decode failed",
+                )
+                .await;
+                if fatal {
+                    break;
+                }
                 continue;
             }
         };
@@ -1244,6 +1563,7 @@ async fn handle_socket(socket: WebSocket, hub: Arc<Hub>) {
                 device_id: body_device_id,
                 mut caps,
             } => {
+                let binary_audio = supports_binary_audio(&caps);
                 let mut entry = "body";
                 if let Some(ticket) = caps
                     .get("host_ticket")
@@ -1254,10 +1574,17 @@ async fn handle_socket(socket: WebSocket, hub: Arc<Hub>) {
                     let mut tickets = hub.host_tickets.lock().await;
                     tickets.retain(|_, expires_ms| *expires_ms > now);
                     if tickets.remove(&ticket).is_none() {
-                        hub.monitor
-                            .lock()
-                            .await
-                            .record_error("invalid or expired host connect ticket");
+                        send_direct_message(
+                            &hub,
+                            &direct_tx,
+                            Message::ProtocolError {
+                                code: "invalid_host_ticket".into(),
+                                message: "host connect ticket is invalid or expired".into(),
+                                fatal: true,
+                            },
+                            "host panel registration rejected",
+                        )
+                        .await;
                         break;
                     }
                     if let Some(caps) = caps.as_object_mut() {
@@ -1267,7 +1594,10 @@ async fn handle_socket(socket: WebSocket, hub: Arc<Hub>) {
                     entry = "cortico";
                 }
                 connected_device = Some(body_device_id.clone());
-                *body_slot.lock().await = Some(body_device_id.clone());
+                *connection_delivery.lock().await = ConnectionDelivery {
+                    device_id: Some(body_device_id.clone()),
+                    binary_audio,
+                };
                 hub.monitor
                     .lock()
                     .await
@@ -1301,6 +1631,13 @@ async fn handle_socket(socket: WebSocket, hub: Arc<Hub>) {
                     format!("local mute; at_ms={at_ms}; turn={turn}"),
                 )
                 .await;
+                send_direct_message(
+                    &hub,
+                    &direct_tx,
+                    Message::TurnStarted { turn },
+                    format!("turn={turn}; requested by speech.start"),
+                )
+                .await;
             }
             Message::AudioUp {
                 turn,
@@ -1308,83 +1645,36 @@ async fn handle_socket(socket: WebSocket, hub: Arc<Hub>) {
                 pcm_b64,
                 sr,
             } => {
-                if !(8_000..=96_000).contains(&sr) || pcm_b64.len() > MAX_TURN_AUDIO_BYTES * 2 {
-                    hub.monitor.lock().await.record_error(format!(
-                        "invalid audio.up: sr={sr}; encoded_bytes={}",
-                        pcm_b64.len()
-                    ));
-                    continue;
-                }
-                let current_turn = hub.state.lock().await.turn;
-                if turn < current_turn {
-                    hub.record(
-                        "body->hub",
-                        &message,
-                        Some(turn),
-                        format!("stale turn={turn}; current={current_turn}; dropped"),
-                    )
-                    .await;
-                    continue;
-                }
-                if turn > current_turn {
-                    let mut state = hub.state.lock().await;
-                    state.turn = turn;
-                    state.state = StateName::Listening;
-                    state.since_ms = now_ms();
-                    state.reason = "audio.up".into();
-                }
-                hub.audio
-                    .lock()
-                    .await
-                    .retain(|pending_turn, _| *pending_turn >= turn);
-                hub.set_state(StateName::Listening, "audio.up").await;
                 let Ok(pcm) =
                     base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &pcm_b64)
                 else {
                     hub.record("body->hub", &message, Some(turn), "invalid pcm base64")
                         .await;
+                    send_direct_message(
+                        &hub,
+                        &direct_tx,
+                        Message::ProtocolError {
+                            code: "invalid_audio".into(),
+                            message: "pcm_b64 is not valid base64".into(),
+                            fatal: false,
+                        },
+                        "audio.up rejected",
+                    )
+                    .await;
                     continue;
                 };
-                if pcm.len() % 2 != 0 {
-                    hub.monitor.lock().await.record_error(format!(
-                        "invalid audio.up: turn={turn}; PCM16 byte count is odd"
-                    ));
-                    continue;
-                }
-                hub.record(
-                    "body->hub",
-                    &message,
-                    Some(turn),
-                    format!("{seq}: {} bytes at {sr} Hz", pcm.len()),
-                )
-                .await;
-                let rate_changed = {
-                    let mut audio = hub.audio.lock().await;
-                    let pending = audio.entry(turn).or_insert_with(|| PendingAudio {
-                        pcm: Vec::new(),
-                        sample_rate: sr,
-                        truncated: false,
-                        invalid: false,
-                    });
-                    let changed = pending.sample_rate != sr;
-                    if changed {
-                        pending.invalid = true;
-                    }
-                    let remaining = MAX_TURN_AUDIO_BYTES.saturating_sub(pending.pcm.len());
-                    if !changed {
-                        let take = remaining.min(pcm.len());
-                        pending.pcm.extend_from_slice(&pcm[..take]);
-                        if take < pcm.len() {
-                            pending.truncated = true;
-                        }
-                    }
-                    changed
-                };
-                if rate_changed {
-                    hub.record_system_for_turn(
-                        "audio.sample_rate_changed",
-                        format!("turn={turn}; new={sr}"),
-                        Some(turn),
+                if let Err((code, detail)) =
+                    ingest_audio_chunk(&hub, &message, turn, seq, sr, &pcm, "json-base64").await
+                {
+                    send_direct_message(
+                        &hub,
+                        &direct_tx,
+                        Message::ProtocolError {
+                            code: code.into(),
+                            message: detail,
+                            fatal: false,
+                        },
+                        "audio.up rejected",
                     )
                     .await;
                 }
@@ -1425,10 +1715,11 @@ async fn handle_socket(socket: WebSocket, hub: Arc<Hub>) {
             Message::Say { .. } => {}
             Message::RenderCue { .. } => {}
             Message::BodyHandoff { .. } => {}
+            Message::TurnStarted { .. } | Message::ProtocolError { .. } => {}
         }
     }
     send_task.abort();
-    *body_slot.lock().await = None;
+    connection_delivery.lock().await.device_id = None;
     let abandoned_turn = hub.state.lock().await.turn;
     let abandoned_audio = hub.audio.lock().await.remove(&abandoned_turn);
     if let Some(pending) = abandoned_audio {
@@ -1894,6 +2185,7 @@ async fn send_turn_reply(
         sr: sample_rate.max(1),
         mouth: absolute_solver::mouth_from_pcm(&pcm),
         text,
+        media: None,
     };
     let note = note.into();
     hub.record_system_for_turn("turn.pipeline", format!("turn={turn}; {note}"), Some(turn))
@@ -1982,6 +2274,7 @@ mod tests {
             sr: 16_000,
             mouth: Vec::new(),
             text: "hello".into(),
+            media: None,
         };
         let cue = Message::RenderCue {
             turn: Some(7),
@@ -2022,6 +2315,52 @@ mod tests {
             next_connected_body(&monitor.devices, None),
             Some("body-b".into())
         );
+    }
+
+    #[test]
+    fn binary_capable_say_is_split_into_metadata_and_media_frame() {
+        assert!(supports_binary_audio(&json!({ "media": ["pcm16-binary"] })));
+        assert!(!supports_binary_audio(
+            &json!({ "media": ["pcm16-base64"] })
+        ));
+
+        let (metadata, frame) = prepare_connection_message(
+            Message::Say {
+                turn: 9,
+                seq: 0,
+                pcm_b64: "AQACAA==".into(),
+                sr: 16_000,
+                mouth: vec![0.1, 0.2],
+                text: "hello".into(),
+                media: None,
+            },
+            true,
+        );
+        let Message::Say { pcm_b64, media, .. } = metadata else {
+            panic!("expected say metadata")
+        };
+        assert!(pcm_b64.is_empty());
+        assert_eq!(media.as_deref(), Some("pcm16-binary"));
+        let frame = frame.expect("binary audio frame");
+        assert_eq!(frame.kind, BinaryMediaKind::SayAudio);
+        assert_eq!(frame.pcm, vec![1, 0, 2, 0]);
+    }
+
+    #[test]
+    fn outbound_protocol_errors_are_counted() {
+        let mut monitor = Monitor::default();
+        monitor.record(
+            "hub->body",
+            &Message::ProtocolError {
+                code: "invalid_audio".into(),
+                message: "bad frame".into(),
+                fatal: false,
+            },
+            None,
+            "bad frame",
+        );
+        assert_eq!(monitor.protocol_errors, 1);
+        assert_eq!(monitor.messages_out_by_type.get("protocol.error"), Some(&1));
     }
 
     async fn mock_asr(body: Bytes) -> Json<Value> {

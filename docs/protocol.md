@@ -35,7 +35,7 @@ The Rust types in `src/wire.rs` are the source of truth. Generated schemas must 
 - Monitor snapshot: `GET /monitor.json`
 - Adapter probe: `GET /adapters`
 
-The current v1 media representation is base64 PCM16 inside JSON. Binary media and WebRTC are outside v1.
+JSON media uses base64 PCM16 for compatibility. A body that advertises `media: ["pcm16-binary"]` may use the optional v1 binary media frame described below instead. WebRTC is outside v1.
 
 ## Envelope
 
@@ -72,6 +72,8 @@ Unknown fields are reserved for forward compatibility.
 | `say` | Hub → active body | Final response text, PCM16 audio, and mouth timeline |
 | `render.cue` | Hub → active body | Subtitle/expression/motion cue |
 | `body.handoff` | Hub → all bodies | Announce the current active body |
+| `turn.started` | Hub → requesting body | Return the authoritative turn allocated after `speech.start` |
+| `protocol.error` | Hub → offending body | Structured validation or protocol error |
 
 ## Registration
 
@@ -117,6 +119,18 @@ Unknown fields are reserved for forward compatibility.
 
 `speech.start` increments the Hub turn and immediately invalidates older output.
 
+The Hub responds only to the requesting connection with:
+
+```json
+{
+  "v": 1,
+  "type": "turn.started",
+  "turn": 13
+}
+```
+
+Clients that use local VAD should wait for `turn.started` before assigning binary audio frames to a turn. They may buffer a short pre-roll while waiting.
+
 `speech.end` finalizes the current turn and starts ASR → LLM → TTS.
 
 ## Audio Output
@@ -130,7 +144,8 @@ Unknown fields are reserved for forward compatibility.
   "pcm_b64": "...",
   "sr": 32000,
   "mouth": [0.1, 0.4, 0.8],
-  "text": "Final response text"
+  "text": "Final response text",
+  "media": "pcm16-binary"
 }
 ```
 
@@ -138,6 +153,39 @@ Unknown fields are reserved for forward compatibility.
 - `sr` is the actual output sample rate returned by TTS.
 - `mouth` is a normalized `0.0..=1.0` timeline derived from the PCM envelope.
 - `text` is the canonical subtitle for the same turn.
+- `media` is omitted for legacy base64 JSON audio.
+- When `media` is `pcm16-binary`, `pcm_b64` is empty and exactly one binary `say.audio` frame follows the JSON frame with matching `turn` and `seq`.
+
+## Binary Media
+
+Binary frames are enabled only when the body advertises:
+
+```json
+{
+  "caps": {
+    "speaker": true,
+    "media": ["pcm16-binary"]
+  }
+}
+```
+
+All integer fields use little-endian encoding.
+
+| Offset | Size | Field |
+|---:|---:|---|
+| 0 | 4 | ASCII magic `ASV1` |
+| 4 | 1 | Binary media version, currently `1` |
+| 5 | 1 | Kind: `1 = audio.up`, `2 = say.audio` |
+| 6 | 2 | Reserved, currently zero |
+| 8 | 8 | Turn |
+| 16 | 8 | Sequence |
+| 24 | 4 | Sample rate |
+| 28 | remaining | Mono signed PCM16 |
+
+- `audio.up` uses the same turn and sequence semantics as JSON audio.
+- `say.audio` matches the `turn` and `seq` of the preceding binary `say` metadata.
+- Odd PCM16 lengths, invalid sample rates, unknown versions, and unknown kinds produce `protocol.error`.
+- The legacy JSON path remains available and is used by clients that do not advertise binary media.
 
 ## Render Cues
 
@@ -227,7 +275,29 @@ Memory payloads never enter trace notes or monitor snapshots.
 
 ## Errors And Compatibility
 
-For v1, malformed frames and unsupported protocol versions are logged in Hub diagnostics and ignored. A structured error frame is not yet defined.
+Malformed input produces a targeted frame:
+
+```json
+{
+  "v": 1,
+  "type": "protocol.error",
+  "code": "invalid_binary_media",
+  "message": "invalid binary media magic",
+  "fatal": false
+}
+```
+
+`fatal: true` means the Hub will close the connection after sending the error. Current codes include:
+
+- `invalid_message`
+- `unsupported_version`
+- `not_registered`
+- `invalid_binary_media`
+- `invalid_binary_kind`
+- `invalid_audio`
+- `audio_too_large`
+- `stale_turn`
+- `invalid_host_ticket`
 
 Clients should:
 

@@ -16,8 +16,8 @@
     .meta{margin-top:7px;color:var(--muted);font:11px "Cascadia Mono",Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     #subtitle{display:none;padding:10px 18px;border-top:1px solid var(--line);background:#fafcfe;color:#344255;font-size:12px;line-height:1.5;max-height:72px;overflow:auto}
     #subtitle.on{display:block}
-    footer{padding:10px 18px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;border-top:1px solid var(--line)}
-    footer span{color:var(--muted);font-size:11px}button{font:inherit;color:#175f48;background:#ecf8f2;border:1px solid #bfe7d5;border-radius:4px;padding:5px 9px;cursor:pointer}button:hover{border-color:var(--ok)}button[aria-pressed="true"]{color:var(--muted);background:#f5f7f9;border-color:var(--line)}
+    footer{padding:10px 18px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;border-top:1px solid var(--line);flex-wrap:wrap}
+    footer span{color:var(--muted);font-size:11px;min-width:0}.actions{display:flex;gap:6px;flex-wrap:wrap}button{font:inherit;color:#175f48;background:#ecf8f2;border:1px solid #bfe7d5;border-radius:4px;padding:5px 9px;cursor:pointer}button:hover{border-color:var(--ok)}button[aria-pressed="true"]{color:var(--muted);background:#f5f7f9;border-color:var(--line)}
     body.standby .icon{background:#eef1f4;color:#7c8795}body.standby .state{color:var(--muted)}body.standby .dot{background:#94a0af;box-shadow:0 0 0 4px #eef1f4}
     @media(max-width:360px){.body{grid-template-columns:54px 1fr;padding:14px}.icon{width:54px;height:54px}.icon svg{width:32px;height:32px}h1{font-size:16px}}
   </style>
@@ -38,7 +38,7 @@
       </div>
     </section>
     <div id="subtitle" role="status" aria-live="polite"></div>
-    <footer><span id="detail">本机 Body 已注册后会显示在此</span><button id="sound" aria-pressed="false">启用声音</button></footer>
+    <footer><span id="detail">本机 Body 已注册后会显示在此</span><div class="actions"><button id="mic" aria-pressed="false">启用麦克风</button><button id="sound" aria-pressed="false">启用声音</button></div></footer>
   </main>
   <script defer src="/main.js"></script>
 </body>

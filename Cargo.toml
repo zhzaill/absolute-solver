@@ -1,6 +1,6 @@
 [package]
 name = "absolute-solver"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "Absolute Solver hub monitor and reconnecting body client"
 

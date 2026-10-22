@@ -6,8 +6,8 @@ The Hub owns turns, body routing, permissions, model adapters, memory, and obser
 
 ## Status
 
-- Protocol: **v1**
-- Crate version: **0.2.0**
+- Protocol: **v1** with optional PCM16 binary media
+- Crate version: **0.2.1**
 - Runtime: Rust 2021, Tokio, Axum WebSocket
 - Deployment target: trusted LAN; authentication is not implemented yet
 - Display layer: optional Host Panel or Live2D prototype; Live2D is not required by the protocol
@@ -60,6 +60,9 @@ cargo run --bin absolute-solver-protocol-schema -- schemas
 
 - Versioned WebSocket envelopes with legacy v1 fallback.
 - `hello`, `audio.up`, `speech.start`, `speech.end`, `say`, `render.cue`, and `body.handoff`.
+- Targeted `turn.started` and structured `protocol.error` control frames.
+- Binary PCM16 media for clients that advertise `media: ["pcm16-binary"]`.
+- Host Panel microphone capture with local VAD, pre-roll, half-duplex playback gating, and binary uplink.
 - Turn-scoped PCM16 audio aggregation and stale-turn rejection.
 - OpenAI-compatible ASR, chat, and TTS adapters.
 - Subtitle-only degradation when a model service is unavailable.
@@ -112,12 +115,11 @@ This release is intended for a trusted LAN.
 
 ## Known Limits
 
-- JSON WebSocket frames use base64 PCM16; a binary media plane is not implemented.
+- The binary media plane currently supports PCM16 audio only; camera/video is not implemented.
 - Audio is not streamed sentence-by-sentence yet.
-- Real microphone capture and persistent playback queues are still in progress.
+- Browser microphone capture and local VAD exist; persistent native-device playback queues are still in progress.
 - Camera/perception ingress and capability-scoped host permissions are not implemented.
 - Multi-body handoff currently selects one active output body but does not coordinate playback drain across devices.
-- Protocol errors are logged; v1 has no structured error frame.
 
 ## Repository Layout
 

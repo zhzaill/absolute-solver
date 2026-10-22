@@ -59,6 +59,12 @@
     },
     {
       "properties": {
+        "media": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "mouth": {
           "items": {
             "format": "float",
@@ -215,6 +221,52 @@
       },
       "required": [
         "reason",
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "turn": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "turn.started"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn",
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "fatal": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "protocol.error"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "fatal",
+        "message",
         "type"
       ],
       "type": "object"

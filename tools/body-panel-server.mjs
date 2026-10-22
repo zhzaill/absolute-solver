@@ -4,6 +4,7 @@ import { extname, join, normalize, resolve, sep } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..', 'body-panel');
 const port = Number(process.env.PANEL_PORT || process.argv[2] || 5274);
+const hubWs = process.env.HUB_WS_URL || 'ws://127.0.0.1:18100/ws';
 const types = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -39,5 +40,7 @@ const server = http.createServer(async (request, response) => {
 });
 
 server.listen(port, '127.0.0.1', () => {
-  console.log(`Body panel: http://127.0.0.1:${server.address().port}/?hub=ws://LAN_HUB_ADDRESS:18100/ws`);
+  console.log(
+    `Body panel: http://127.0.0.1:${server.address().port}/?hub=${encodeURIComponent(hubWs)}`,
+  );
 });

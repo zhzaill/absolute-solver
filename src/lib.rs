@@ -116,6 +116,8 @@ pub fn trace_event_for_turn(
         Message::SpeechEnd { .. } => ("speech.end", None),
         Message::RenderCue { .. } => ("render.cue", None),
         Message::BodyHandoff { .. } => ("body.handoff", None),
+        Message::TurnStarted { .. } => ("turn.started", None),
+        Message::ProtocolError { .. } => ("protocol.error", None),
     };
     TraceEvent {
         ts: epoch_ms(),

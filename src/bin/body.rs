@@ -269,6 +269,7 @@ where
             sr,
             mouth,
             text,
+            ..
         } = &message
         {
             trace
