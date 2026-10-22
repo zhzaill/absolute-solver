@@ -44,6 +44,7 @@ The public contract is versioned independently from the application release. A c
 ```
 
 - [Protocol specification](docs/protocol.md)
+- [North star and integration rules](docs/north-star.md)
 - [Generated v1 wire schema](schemas/absolute-solver.wire.v1.schema.json)
 - [Generated v1 state schema](schemas/absolute-solver.state.v1.schema.json)
 - [Schema manifest](schemas/absolute-solver.v1.manifest.json)
