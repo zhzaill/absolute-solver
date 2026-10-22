@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HubState",
+  "type": "object",
+  "required": [
+    "reason",
+    "since_ms",
+    "state",
+    "turn"
+  ],
+  "properties": {
+    "reason": {
+      "type": "string"
+    },
+    "since_ms": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "state": {
+      "$ref": "#/definitions/StateName"
+    },
+    "turn": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    }
+  },
+  "definitions": {
+    "StateName": {
+      "type": "string",
+      "enum": [
+        "idle",
+        "listening",
+        "thinking",
+        "speaking",
+        "degraded"
+      ]
+    }
+  }
+}

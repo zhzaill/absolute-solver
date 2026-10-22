@@ -1,0 +1,6 @@
+{
+  "protocol": "absolute-solver",
+  "stateSchema": "absolute-solver.state.v1.schema.json",
+  "version": 1,
+  "wireSchema": "absolute-solver.wire.v1.schema.json"
+}

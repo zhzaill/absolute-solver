@@ -1,0 +1,41 @@
+/target/
+/data/
+/trace/*.jsonl
+/artifacts/
+/logs/
+/.pnpm-store/
+/stage/
+
+# Private deployment and operational records stay local.
+/2026-*.md
+/deploy-hub.ps1
+/run-*.cmd
+/cortico-bridge.ps1
+/cortico-bridge.cmd
+/monitor.ps1
+/monitor.cmd
+/tools/live2d-stage-server.mjs
+/tools/gen-stage-importmap.mjs
+
+# Local agent/runtime state
+/.agents/
+/.aws/
+/.codex/
+
+# Generated/runtime assets
+*.exe
+*.dll
+*.pdb
+*.wav
+*.zip
+*.png
+*.bak
+*.memory-new
+*.pre-*.bak
+
+# Local secrets and editor state
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db

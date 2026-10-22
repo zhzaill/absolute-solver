@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Absolute Solver / 全链路监视器</title>
+<style>
+:root{color-scheme:dark;--ink:#040812;--panel:#081326;--panel2:#0b1b30;--line:#17476f;--line2:#0e2d4b;--text:#dcecff;--muted:#7394b5;--ok:#55e0b0;--cyan:#5bc8ff;--blue:#6d9dff;--warn:#f2c35b;--bad:#ff6c7d;--violet:#bca7ff}
+*{box-sizing:border-box}html{background:var(--ink)}body{margin:0;min-height:100vh;background:var(--ink);color:var(--text);font:13px/1.42 "Cascadia Mono","SFMono-Regular","Consolas",monospace;image-rendering:pixelated}
+main{max-width:1500px;margin:0 auto;padding:18px}.top{display:flex;gap:20px;align-items:flex-end;justify-content:space-between;border-bottom:4px solid var(--line);padding-bottom:14px;margin-bottom:12px}
+h1{font-size:clamp(20px,3vw,32px);letter-spacing:2px;margin:0;color:var(--cyan);text-shadow:3px 3px #0d2b4b}.sub{color:var(--muted);margin-top:5px}.badge{display:inline-block;border:1px solid var(--line);background:var(--panel2);padding:3px 7px;margin-left:6px;color:var(--blue)}
+.controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}button,select{font:inherit;color:var(--text);background:var(--panel2);border:2px solid var(--line);border-radius:3px;padding:7px 10px;cursor:pointer}button:hover,select:hover{border-color:var(--cyan)}button[aria-pressed="true"]{background:#113d4b;border-color:var(--ok)}
+.banner{display:flex;align-items:center;gap:9px;flex-wrap:wrap;border:2px solid var(--line);background:var(--panel);padding:9px 12px;margin-bottom:12px;min-height:42px}.banner b{color:var(--text)}.chip{border-left:2px solid var(--line);padding-left:10px;color:var(--muted)}.pulse{width:10px;height:10px;display:inline-block;background:var(--warn);box-shadow:3px 0 var(--warn),0 3px var(--warn),3px 3px var(--warn);margin-right:7px}.pulse.ok{background:var(--ok);box-shadow:3px 0 var(--ok),0 3px var(--ok),3px 3px var(--ok)}.pulse.bad{background:var(--bad);box-shadow:3px 0 var(--bad),0 3px var(--bad),3px 3px var(--bad)}
+.grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:9px;margin-bottom:12px}.card{background:var(--panel);border:2px solid var(--line);border-radius:4px;box-shadow:4px 4px #01040a;padding:11px;min-width:0;min-height:92px}.label{color:var(--muted);font-size:10px;letter-spacing:.8px;text-transform:uppercase}.value{font-size:20px;color:var(--text);margin-top:7px;overflow-wrap:anywhere}.small{font-size:11px;color:var(--muted);margin-top:5px;overflow-wrap:anywhere}.accent{color:var(--violet)}
+.live{display:grid;grid-template-columns:minmax(210px,.62fr) minmax(0,1.38fr);gap:12px;margin-bottom:12px}.sparkPanel{background:var(--panel);border:2px solid var(--line);border-radius:4px;padding:10px 12px;min-width:0}.spark{height:64px;display:flex;align-items:flex-end;gap:2px;margin-top:9px;border-bottom:1px solid var(--line);padding-bottom:2px;overflow:hidden}.spark i{display:block;flex:1;min-width:2px;height:var(--h,2%);background:var(--cyan);box-shadow:0 0 0 1px #07111f inset}.spark i.hot{background:var(--violet)}.legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:7px;color:var(--muted);font-size:10px}.legend strong{color:var(--text)}
+.columns{display:grid;grid-template-columns:minmax(270px,.88fr) minmax(260px,.92fr) minmax(0,1.35fr);gap:12px}.stack{min-width:0}.section{background:var(--panel);border:2px solid var(--line);border-radius:4px;box-shadow:4px 4px #01040a;margin-bottom:12px;min-width:0}.section h2{font-size:12px;letter-spacing:1px;color:var(--cyan);margin:0;padding:9px 11px;border-bottom:2px solid var(--line);display:flex;justify-content:space-between;gap:10px}.rows{padding:6px 11px}.row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:start;padding:7px 0;border-bottom:1px dashed #173854}.row:last-child{border-bottom:0}.row .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.row .detail{grid-column:1/-1;color:var(--muted);font-size:10px;overflow-wrap:anywhere}.row b{font-weight:600;text-align:right}.good{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}.info{color:var(--cyan)}.violet{color:var(--violet)}
+.service{padding:8px 0;border-bottom:1px dashed #173854}.service:last-child{border-bottom:0}.serviceHead{display:flex;justify-content:space-between;gap:8px}.serviceDetail{color:var(--muted);font-size:10px;margin-top:4px;overflow-wrap:anywhere}
+#events{max-height:560px;overflow:auto;padding:0 11px 9px}.event{padding:8px 0;border-bottom:1px dashed #173854;white-space:pre-wrap;overflow-wrap:anywhere}.event:last-child{border-bottom:0}.event time{color:var(--muted)}.event .dir{color:var(--cyan)}.event.error .dir{color:var(--bad)}.empty{color:var(--muted);padding:10px 0}.foot{color:var(--muted);font-size:10px;border-top:2px solid var(--line);padding-top:9px;margin-top:3px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+@media(max-width:1180px){.grid{grid-template-columns:repeat(3,minmax(0,1fr))}.columns{grid-template-columns:repeat(2,minmax(0,1fr))}.columns>.stack:last-child{grid-column:1/-1}}
+@media(max-width:760px){main{padding:11px}.top{align-items:flex-start;flex-direction:column}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.live,.columns{grid-template-columns:1fr}.columns>.stack:last-child{grid-column:auto}.banner{gap:6px}.chip{width:100%;border-left:0;border-top:1px solid var(--line2);padding:4px 0 0}.value{font-size:18px}}
+@media(max-width:620px){.grid{grid-template-columns:1fr}.card{min-height:78px}}
+@media(max-width:430px){.grid{grid-template-columns:1fr}.small{font-size:10px}}
+</style>
+</head>
+<body>
+<main>
+<header class="top">
+  <div><h1>ABSOLUTE SOLVER / 全链路</h1><div class="sub">多方向信息流诊断 <span id="version" class="badge">v--</span><span id="listen" class="badge">--</span></div></div>
+  <div class="controls"><button id="pause" aria-pressed="false">暂停</button><button id="refresh">刷新</button><select id="filter" aria-label="事件筛选"><option value="all">全部事件</option><option value="body">身体链路</option><option value="models">模型链路</option><option value="cortico">Cortico</option><option value="memory">记忆</option><option value="errors">错误与降级</option></select></div>
+</header>
+<div class="banner"><span><i id="pulse" class="pulse"></i><b id="link">正在建立监视链路</b></span><span class="chip">状态 <b id="reason">等待快照</b></span><span class="chip" id="freshness">数据年龄 --</span><span class="chip" id="updated">最后刷新 --:--:--</span><span class="chip" id="uptime">运行 --</span></div>
+<section class="grid">
+  <div class="card"><div class="label">Hub 状态 / 回合</div><div id="state" class="value">--</div><div id="stateSub" class="small">--</div></div>
+  <div class="card"><div class="label">身体连接 / 设备</div><div id="links" class="value">--</div><div id="linksSub" class="small">--</div></div>
+  <div class="card"><div class="label">总流量 入 / 出</div><div id="flow" class="value">--</div><div id="flowSub" class="small">--</div></div>
+  <div class="card"><div class="label">模型链路</div><div id="modelHealth" class="value">--</div><div id="modelSub" class="small">--</div></div>
+  <div class="card"><div class="label">长期记忆</div><div id="memory" class="value">--</div><div id="memorySub" class="small">--</div></div>
+  <div class="card"><div class="label">Cortico 链路</div><div id="corticoHealth" class="value">--</div><div id="corticoSub" class="small">--</div></div>
+</section>
+<section class="live">
+  <div class="sparkPanel"><div class="label">近 60 秒活跃脉冲</div><div id="spark" class="spark"></div><div class="legend"><span>入站 <strong id="rateIn">0.0/s</strong></span><span>出站 <strong id="rateOut">0.0/s</strong></span><span>事件 <strong id="rateEvents">0.0/s</strong></span><span>音频 <strong id="rateAudio">0 B/s</strong></span></div></div>
+  <section class="section" style="margin:0"><h2>信息方向矩阵 <span class="label">累计 / 速率 / 健康</span></h2><div class="rows" id="directions"><div class="empty">等待数据...</div></div></section>
+</section>
+<div class="columns">
+  <div class="stack">
+    <section class="section"><h2>设备与身体</h2><div class="rows" id="devices"><div class="empty">尚未发现设备</div></div></section>
+    <section class="section"><h2>检查与异常</h2><div class="rows" id="checks"><div class="empty">等待数据...</div></div></section>
+  </div>
+  <div class="stack">
+    <section class="section"><h2>ASR / LLM / TTS 服务</h2><div class="rows" id="services"><div class="empty">正在探测模型服务...</div></div></section>
+    <section class="section"><h2>模型运行时</h2><div class="rows" id="modelRuntime"><div class="empty">尚无调用</div></div></section>
+    <section class="section"><h2>Cortico 运行态</h2><div class="rows" id="corticoDetail"><div class="empty">等待数据...</div></div></section>
+    <section class="section"><h2>记忆流</h2><div class="rows" id="memoryDetail"><div class="empty">等待数据...</div></div></section>
+  </div>
+  <div class="stack">
+    <section class="section"><h2>最近事件 <span id="event-count" class="label"></span></h2><div id="events"><div class="empty">等待数据...</div></div></section>
+  </div>
+</div>
+<div class="foot"><span>数据源 <span id="source">/monitor.json + /adapters</span> // 每秒聚合，每五秒探测</span><span id="traceInfo">trace --</span></div>
+</main>
+<script>
+(()=>{
+const $=id=>document.getElementById(id);
+const state={paused:false,data:null,adapter:null,adapterError:null,adapterLoading:false,filter:'all',lastSuccess:0,prev:null,rates:{in:0,out:0,events:0,audio:0},history:[]};
+const n=value=>Number(value||0).toLocaleString('zh-CN');
+const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const text=(id,value)=>$(id).textContent=value==null?'--':String(value);
+const row=(name,value,klass='',detail='')=>`<div class="row"><span class="name">${esc(name)}</span><b class="${klass}">${esc(value)}</b>${detail?`<span class="detail">${esc(detail)}</span>`:''}</div>`;
+const fbytes=value=>{const v=Number(value||0);if(v<1024)return `${n(v)} B`;if(v<1048576)return `${(v/1024).toFixed(1)} KiB`;if(v<1073741824)return `${(v/1048576).toFixed(1)} MiB`;return `${(v/1073741824).toFixed(2)} GiB`};
+const age=ms=>{if(ms==null)return '--';const s=Math.max(0,Math.floor(Number(ms)/1000));if(s<60)return `${s}s`;const m=Math.floor(s/60);if(m<60)return `${m}m ${s%60}s`;const h=Math.floor(m/60);return `${h}h ${m%60}m`};
+const rate=(value,digits=1)=>Number(value||0).toFixed(digits);
+const totals=x=>({in:Number(x.messages_in||0),out:Number(x.messages_out||0),events:Number(x.cortico_events||0),audio:Number(x.audio_bytes||0),memory:Number(x.memory_searches||0)+Number(x.memory_writes||0)});
+const delta=(current,previous)=>current>=previous?current-previous:0;
+function updateRates(x){
+  const now=Number(x.server_time_ms||Date.now()),current=totals(x);
+  if(state.prev&&now>state.prev.time){
+    const seconds=(now-state.prev.time)/1000;
+    state.rates={in:delta(current.in,state.prev.totals.in)/seconds,out:delta(current.out,state.prev.totals.out)/seconds,events:delta(current.events,state.prev.totals.events)/seconds,audio:delta(current.audio,state.prev.totals.audio)/seconds};
+    const activity=state.rates.in+state.rates.out+state.rates.events+(state.rates.audio/4096)+(delta(current.memory,state.prev.totals.memory)/seconds);
+    state.history.push(activity); if(state.history.length>60)state.history.shift();
+  }
+  state.prev={time:now,totals:current};
+}
+function renderSpark(){
+  const values=[...Array(Math.max(0,60-state.history.length)).fill(0),...state.history];const max=Math.max(1,...values);$('spark').innerHTML=values.map(value=>`<i class="${value>=max*.7?'hot':''}" style="--h:${Math.max(2,Math.min(100,value/max*100))}%"></i>`).join('');
+}
+function serviceOf(name){return state.adapter?.services?.find(service=>service.name===name)}
+function serviceLabel(service){if(!service)return'检查中';if(service.ok)return'正常';return service.configured?'异常':'未配置'}
+function serviceClass(service){if(!service)return'warn';if(service.ok)return'good';return service.configured?'bad':'warn'}
+function renderAdapters(){
+  const snapshot=state.adapter;
+  if(!snapshot){$('services').innerHTML=`<div class="empty">${esc(state.adapterLoading?'正在探测模型服务...':state.adapterError||'等待探测...')}</div>`;text('modelHealth','--');text('modelSub',state.adapterError||'检查中');return}
+  const services=snapshot.services||[],configured=services.filter(service=>service.configured).length,healthy=services.filter(service=>service.ok).length;
+  text('modelHealth',`${healthy}/${configured}`); $('modelHealth').className=`value ${healthy===configured&&configured>0?'good':healthy?'warn':'bad'}`;
+  text('modelSub',services.map(service=>`${service.name.toUpperCase()} ${serviceLabel(service)}`).join(' · '));
+  $('services').innerHTML=services.map(service=>{const klass=serviceClass(service),latency=service.latency_ms==null?'-':`${service.latency_ms}ms`;return `<div class="service"><div class="serviceHead"><b>${esc(service.name.toUpperCase())}</b><span class="${klass}">${esc(serviceLabel(service))} · ${esc(latency)}</span></div><div class="serviceDetail">${esc(service.base_url||'--')}${service.error?` // ${esc(service.error)}`:''}</div></div>`}).join('');
+  const budget=snapshot.llm_budget||{};
+  $('services').insertAdjacentHTML('beforeend',row('LLM 预算',`${n(budget.used_tokens)} tok / ${n(budget.requests)} req`,Number(budget.blocked_requests||0)?'warn':'info',`max_tokens=${n(snapshot.config?.llm_max_total_tokens)} max_requests=${n(snapshot.config?.llm_max_requests)}`));
+}
+function renderDevices(x){
+  const entries=Object.entries(x.devices||{}); if(!entries.length){$('devices').innerHTML='<div class="empty">尚未收到 body hello</div>';return}
+  $('devices').innerHTML=entries.map(([id,device])=>{const caps=device.caps||{},capText=Object.entries(caps).map(([key,value])=>`${key}=${typeof value==='object'?JSON.stringify(value):value}`).join(' '),active=x.active_body===id;return row(id,active?'活动 · 已连接':device.connected?'待机 · 已连接':'已断开',active?'good':device.connected?'info':'warn',`${capText||'caps 未上报'} // seen ${age(Date.now()-Number(device.last_seen_ms||0))} ago`)}).join('');
+}
+function renderDirections(x){
+  const services=state.adapter?.services||[],modelCalls=Number(x.asr_calls||0)+Number(x.llm_calls||0)+Number(x.tts_calls||0),modelOk=Number(x.asr_ok||0)+Number(x.llm_ok||0)+Number(x.tts_ok||0);
+  const errorCount=Number(x.connection_errors||0)+Number(x.protocol_errors||0)+Number(x.memory_errors||0)+Number(x.asr_errors||0)+Number(x.tts_errors||0)+Number(x.llm_degraded||0);
+  const corticoAge=x.cortico_last_event_ms?age(Date.now()-x.cortico_last_event_ms):'无事件';
+  $('directions').innerHTML=[
+    row('身体 → Hub',`${n(x.messages_in)} msg`,x.connections?'good':'warn',`${rate(state.rates.in)}/s · ${n(x.audio_frames)} audio frames`),
+    row('Hub → 身体',`${n(x.messages_out)} msg`,x.messages_out?'good':'warn',`${rate(state.rates.out)}/s · ${fbytes(x.audio_bytes)}`),
+    row('Cortico → Hub',`${n(x.cortico_events)} event`,x.cortico_events?'good':'warn',`${rate(state.rates.events)}/s · last ${corticoAge} · tools ${n(x.cortico_tool_results)}`),
+    row('Hub → 模型',`${n(modelOk)} / ${n(modelCalls)} ok`,modelCalls&&modelOk===modelCalls?'good':modelCalls?'warn':'warn',services.map(service=>`${service.name.toUpperCase()}:${serviceLabel(service)}`).join(' · ')),
+    row('Hub ↔ 记忆',`${n(x.memory_writes)} w / ${n(x.memory_searches)} s`,Number(x.memory_errors||0)?'bad':'good',`hits ${n(x.memory_hits)} · ${n(x.memory_items)} stored`),
+    row('异常总览',`${n(errorCount)} issue`,errorCount?'bad':'good',x.last_error||'no active error')
+  ].join('');
+}
+function renderCortico(x){
+  const c=x.cortico_monitor||{},status=c.status||{},usage=c.usage?.totals||{},connection=status.modelConnection||{};
+  if(!c.configured){text('corticoHealth','未配置');$('corticoHealth').className='value warn';text('corticoSub','设置 SOLVER_CORTICO_MONITOR_URL');$('corticoDetail').innerHTML='<div class="empty">Hub 未配置 Cortico 只读监视地址</div>';return}
+  text('corticoHealth',c.ok?'在线':'不可达');$('corticoHealth').className=`value ${c.ok?'good':'bad'}`;text('corticoSub',`${n(x.cortico_events)} events · ${n(x.cortico_expressions)} expressions`);
+  const checked=c.checked_ms?age(Date.now()-c.checked_ms):'--';
+  const rows=[row('进程',c.ok?'可达':'异常',c.ok?'good':'bad',`${c.url} // checked ${checked} ago${c.latency_ms==null?'':` // ${c.latency_ms}ms`}`)];
+  if(c.status){rows.push(row('运行时间',status.uptimeSec==null?'--':age(Number(status.uptimeSec)*1000),'info'));rows.push(row('Provider / Model',`${connection.name||'--'} / ${connection.model||'--'}`,'violet'))}
+  if(c.usage){rows.push(row('Usage 调用',n(usage.calls),'info'));rows.push(row('Tokens 入 / 出',`${n(usage.promptTokens)} / ${n(usage.completionTokens)}`,'info'));if(usage.cost!=null)rows.push(row('估算费用',`${usage.currency||x.cortico_monitor?.usage?.currency||''} ${Number(usage.cost).toFixed(4)}`,'warn'))}
+  if(c.error)rows.push(row('探测错误',c.error,'bad'));
+  if(c.errors?.length){const item=c.errors[c.errors.length-1];rows.push(row('最近模型错误',item.message||item.error||'unknown','bad'))}
+  $('corticoDetail').innerHTML=rows.join('');
+}
+function renderRuntime(x){
+  const runtime=[
+    row('ASR',`${n(x.asr_ok)} ok / ${n(x.asr_errors)} err`,Number(x.asr_errors||0)?'bad':'good',`calls ${n(x.asr_calls)} · last ${x.asr_last_latency_ms==null?'--':`${x.asr_last_latency_ms}ms`}`),
+    row('LLM',`${n(x.llm_ok)} ok / ${n(x.llm_degraded)} degraded`,Number(x.llm_degraded||0)?'warn':'good',`calls ${n(x.llm_calls)} · last ${x.llm_last_latency_ms==null?'--':`${x.llm_last_latency_ms}ms`}`),
+    row('LLM Tokens',`${n(x.llm_prompt_tokens)} / ${n(x.llm_completion_tokens)}`,'info','prompt / completion'),
+    row('TTS',`${n(x.tts_ok)} ok / ${n(x.tts_errors)} err`,Number(x.tts_errors||0)?'bad':'good',`calls ${n(x.tts_calls)} · last ${x.tts_last_latency_ms==null?'--':`${x.tts_last_latency_ms}ms`}`),
+    row('TTS 输出',fbytes(x.tts_output_bytes),'violet','累计已解码 PCM')
+  ]; $('modelRuntime').innerHTML=runtime.join('');
+}
+function renderChecks(x){
+  const items=[
+    row('连接错误',n(x.connection_errors),Number(x.connection_errors||0)?'bad':'good'),
+    row('协议错误',n(x.protocol_errors),Number(x.protocol_errors||0)?'bad':'good'),
+    row('记忆错误',n(x.memory_errors),Number(x.memory_errors||0)?'bad':'good'),
+    row('模型降级',n(Number(x.llm_degraded||0)+Number(x.tts_errors||0)),Number(x.llm_degraded||0)+Number(x.tts_errors||0)?'bad':'good'),
+    row('断开次数',n(x.disconnects),Number(x.disconnects||0)?'warn':'good'),
+    x.last_error?row('最近错误',x.last_error,'bad'):''
+  ]; $('checks').innerHTML=items.join('');
+}
+function renderMemory(x){
+  text('memory',n(x.memory_items));text('memorySub',`写 ${n(x.memory_writes)} · 查 ${n(x.memory_searches)} · 命中 ${n(x.memory_hits)}`);
+  $('memory').className=`value ${Number(x.memory_errors||0)?'bad':'accent'}`;
+  $('memoryDetail').innerHTML=[row('当前条目',n(x.memory_items),'accent'),row('写入',n(x.memory_writes),'info'),row('检索 / 命中',`${n(x.memory_searches)} / ${n(x.memory_hits)}`,'good'),row('最近回退',n(x.memory_recent_fallbacks),'warn'),row('错误',n(x.memory_errors),Number(x.memory_errors||0)?'bad':'good')].join('');
+}
+function eventMatches(event){
+  const kind=event.type||'',dir=event.dir||'';
+  if(state.filter==='all')return true;
+  if(state.filter==='body')return dir.includes('body');
+  if(state.filter==='models')return kind.startsWith('adapter.')||kind==='turn.pipeline';
+  if(state.filter==='cortico')return kind.startsWith('cortico');
+  if(state.filter==='memory')return kind.startsWith('memory');
+  if(state.filter==='errors')return /error|degraded|empty|stale|invalid|abandoned/.test(kind);
+  return true;
+}
+function renderEvents(x){
+  const events=(x.recent||[]).filter(eventMatches);$('event-count').textContent=`${events.length} 条`;$('events').innerHTML=events.length?events.slice().reverse().map(event=>`<div class="event ${/error|degraded|empty|stale|invalid/.test(event.type||'')?'error':''}"><time>${new Date(event.ts).toLocaleTimeString('zh-CN')}</time> <span class="dir">${esc(event.dir)}</span> <b>${esc(event.type)}</b>${event.turn==null?'':` turn=${esc(event.turn)}`}${event.seq==null?'':` seq=${esc(event.seq)}`}<br>${esc(event.note||'')}</div>`).join(''):'<div class="empty">没有匹配事件</div>';
+}
+function render(x){
+  state.data=x;state.lastSuccess=Date.now();updateRates(x);renderSpark();
+  $('pulse').className='pulse ok';text('link',x.connections>0?'HUB ONLINE / BODY LINKED':'HUB ONLINE / BODY IDLE');text('reason',x.hub_reason||'--');text('updated',`最后刷新 ${new Date().toLocaleTimeString('zh-CN')}`);text('uptime',`运行 ${age(x.hub_uptime_ms)}`);text('version',`v${x.hub_version||'--'}`);text('listen',x.hub_listen||'--');text('traceInfo',`${x.trace_path||'trace'} // ${n(x.trace_events)} events`);
+  text('state',String(x.hub_state||'--').toUpperCase());$('state').className=`value ${x.hub_state==='degraded'?'warn':x.hub_state==='idle'?'info':'good'}`;text('stateSub',`第 ${n(x.hub_turn)} 回合 · 停留 ${age(x.hub_state_elapsed_ms)}`);
+  text('links',`${n(x.connections)} / ${n(Object.keys(x.devices||{}).length)}`);text('linksSub',`累计连接 ${n(x.total_connections)} · 设备注册 ${n(Object.keys(x.devices||{}).length)} · 活动 ${x.active_body||'未选择'}`);
+  text('flow',`${n(x.messages_in)} / ${n(x.messages_out)}`);$('flow').className='value cyan';text('flowSub',`${rate(state.rates.in)} 入/s · ${rate(state.rates.out)} 出/s`);
+  text('rateIn',`${rate(state.rates.in)}/s`);text('rateOut',`${rate(state.rates.out)}/s`);text('rateEvents',`${rate(state.rates.events)}/s`);text('rateAudio',`${fbytes(state.rates.audio)}/s`);
+  renderDirections(x);renderDevices(x);renderChecks(x);renderMemory(x);renderCortico(x);renderEvents(x);renderAdapters();renderRuntime(x);
+  $('source').textContent=`${location.origin}/monitor.json + /adapters`;
+}
+function updateFreshness(){
+  if(!state.lastSuccess){text('freshness','数据年龄 --');return}
+  const milliseconds=Date.now()-state.lastSuccess,s=milliseconds/1000;
+  text('freshness',`数据年龄 ${s<1?'<1':Math.round(s)}s`);
+  if(s>3){$('freshness').className='chip bad';$('pulse').className='pulse bad';text('link','SNAPSHOT STALE')}else{$('freshness').className='chip';}
+}
+async function tick(){if(state.paused)return;try{const response=await fetch('/monitor.json',{cache:'no-store'});if(!response.ok)throw Error(`HTTP ${response.status}`);render(await response.json())}catch(error){$('pulse').className='pulse bad';text('link','监视链路中断');text('reason',error.message);updateFreshness()}}
+async function tickAdapters(){if(state.paused||state.adapterLoading)return;state.adapterLoading=true;renderAdapters();try{const response=await fetch('/adapters',{cache:'no-store'});if(!response.ok)throw Error(`HTTP ${response.status}`);state.adapter=await response.json();state.adapterError=null}catch(error){state.adapterError=error.message}finally{state.adapterLoading=false;renderAdapters();if(state.data)renderDirections(state.data)}}
+$('pause').onclick=()=>{state.paused=!state.paused;$('pause').textContent=state.paused?'继续':'暂停';$('pause').setAttribute('aria-pressed',String(state.paused));if(!state.paused){tick();tickAdapters()}};
+$('refresh').onclick=()=>{tick();tickAdapters()};
+$('filter').onchange=event=>{state.filter=event.target.value;if(state.data)renderEvents(state.data)};
+tick();tickAdapters();setInterval(tick,1000);setInterval(tickAdapters,5000);setInterval(updateFreshness,1000);setInterval(renderSpark,1000);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,244 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "oneOf": [
+    {
+      "properties": {
+        "caps": true,
+        "device_id": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "hello"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "caps",
+        "device_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "pcm_b64": {
+          "type": "string"
+        },
+        "seq": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "sr": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "turn": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "audio.up"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "pcm_b64",
+        "seq",
+        "sr",
+        "turn",
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "mouth": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "pcm_b64": {
+          "type": "string"
+        },
+        "seq": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "sr": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "text": {
+          "type": "string"
+        },
+        "turn": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "say"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "mouth",
+        "pcm_b64",
+        "seq",
+        "sr",
+        "text",
+        "turn",
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "at_ms": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "speech.start"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "at_ms",
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "at_ms": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "turn": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "speech.end"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "at_ms",
+        "turn",
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "expression": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "type": "string"
+        },
+        "motion": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "turn": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "type": {
+          "enum": [
+            "render.cue"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "active_body": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "body.handoff"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason",
+        "type"
+      ],
+      "type": "object"
+    }
+  ],
+  "properties": {
+    "message_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "v": {
+      "default": 1,
+      "enum": [
+        1
+      ],
+      "format": "uint16",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "v"
+  ],
+  "title": "WireEnvelope",
+  "type": "object"
+}
