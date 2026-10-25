@@ -1,6 +1,7 @@
 pub mod adapters;
 pub mod cortico;
 pub mod memory;
+pub mod presence;
 pub mod wire;
 
 use std::{
@@ -116,6 +117,10 @@ pub fn trace_event_for_turn(
         Message::SpeechEnd { .. } => ("speech.end", None),
         Message::RenderCue { .. } => ("render.cue", None),
         Message::BodyHandoff { .. } => ("body.handoff", None),
+        Message::PresenceIntent { .. } => ("presence.intent", None),
+        Message::PresenceDecision { .. } => ("presence.decision", None),
+        Message::PresenceGrant { .. } => ("presence.grant", None),
+        Message::PresenceRevoke { .. } => ("presence.revoke", None),
         Message::TurnStarted { .. } => ("turn.started", None),
         Message::ProtocolError { .. } => ("protocol.error", None),
     };

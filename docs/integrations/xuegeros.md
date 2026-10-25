@@ -22,11 +22,11 @@ The current PowerShell CLI must never be exposed directly to Persona as a generi
 | Camera MJPEG | independent HTTP stream | Verified |
 | Camera ROS topic | `/camera/image_raw/compressed` | Verified |
 | micro-ROS Agent | UDP 8888 | Listening |
-| Robot micro-ROS client | ESP32 → Agent | Not connected |
-| `/odom` `/imu` `/scan` | robot feedback | Not currently published |
-| Mapping | Gmapping | Blocked by missing `/scan` |
-| Nav2 | ROS 2 | Blocked by missing map, scan, odom, and TF |
-| Motion | `/cmd_vel` | Not verified; high risk |
+| Robot micro-ROS client | ESP32 → Agent | Connected |
+| `/odom` `/imu` `/scan` | robot feedback | Verified |
+| Mapping | Gmapping | Running; `/map` and TF verified |
+| Nav2 | ROS 2 | Not started; motion remains safety-blocked |
+| Motion | `/cmd_vel` | Low-speed manual movement verified; high risk |
 
 ## Architecture
 
@@ -46,6 +46,18 @@ map / Nav2 status ──────────┤
 ```
 
 The adapter owns device I/O and transport. Hub owns turn, presence, routing, permissions, and trace. The Robotics World only projects bounded state into Persona context.
+
+## Implementation Status
+
+The XuegerOS repository now implements the first safety boundary:
+
+- `tools/xuegeros.ps1` is a key-only maintenance and observation CLI.
+- The CLI has no `/cmd_vel` action.
+- `tools/xuegeros_body_adapter.py` exposes the read-only adapter endpoints.
+- `tools/xuegeros_motion_gateway.py` is a separate shadow-mode lease service with no physical backend.
+- `ros2_safety/xuegeros_safety` contains `twist_mux`, a 200 ms command watchdog, velocity clamping, lease validation, and a disarm service.
+
+This is not yet a Hub integration. The adapter service and ROS safety package still need deployment and live validation.
 
 ## Capability Contract
 
@@ -73,9 +85,28 @@ GET /v1/status
 GET /v1/observations/latest
 GET /v1/mapping
 GET /v1/navigation
+GET /v1/world
 ```
 
-`/v1/observations/latest` should return bounded metadata and a short-lived JPEG reference, not raw high-frequency streams. Scan/odom should be summarized or sampled before entering Persona context.
+`/v1/observations/latest` returns bounded structured detections and health
+metrics only. Camera MJPEG frames are parsed into a single-slot in-memory buffer;
+the YOLO worker consumes only the newest frame and drops unread older frames.
+Neither JPEG frames nor inference tensors are written to disk, trace, memory, or
+Persona context. Stale/disconnected camera state clears detections. Each frame
+is capped at 20 detections with normalized bounding boxes. `/v1/world` combines
+this observation with read-only status, map, and navigation summaries; scan and
+odometry remain summarized before any future Persona projection.
+
+World health probes run independently in the background. A sleeping or
+unreachable XuegerOS VM therefore marks VM/map/navigation state unavailable
+without blocking fresh camera detections from `/v1/world`.
+
+The adapter starts its camera and CPU YOLO workers when the service starts. The
+default model is `yolo11n.pt`, with model cache storage limited to model weights;
+image inputs remain in memory. `XUEGEROS_YOLO_MODEL`,
+`XUEGEROS_YOLO_IMAGE_SIZE`, and `XUEGEROS_CAMERA_MAX_FRAME_BYTES` can override
+the model, inference size, and per-frame memory bound. The adapter does not
+publish movement commands and always reports `autonomous_motion_allowed: false`.
 
 ## Motion Is A Separate Safety Problem
 
@@ -93,38 +124,62 @@ Motion therefore requires all of:
 
 Use mature ROS components such as `twist_mux` or the existing Loop-ROS `CmdMux` and `SafetyFilter` after license and runtime review. Do not build another ad-hoc motion publisher.
 
-## Immediate Blocker
+## Current Runtime State
 
-Mapping is not an algorithm problem yet.
+The robot-side micro-ROS client is now connected to the Agent.
 
-The micro-ROS Agent is listening, but no robot-side client session exists. Without that session there is no `/odom`, `/imu`, or `/scan`, so there can be no valid `map -> odom` transform or map.
+Verified graph:
 
-Required order:
+- `/odom`
+- `/imu`
+- `/scan` with one publisher at approximately 9.8 Hz
+- `/battery_state`
+- `/ultrasonic`
+- `/tf` and `/tf_static`
+- `/map` from Gmapping, width 384
 
-1. Configure the ESP32 micro-ROS client to use `LAN_HUB_ADDRESS:8888`.
-2. Confirm an Agent client session and live `/odom`, `/imu`, `/scan`.
-3. Confirm only one `/scan` producer is active.
-4. Check `/odom` freshness and wheel-track calibration.
-5. Start Gmapping only after the sensor graph is healthy.
-6. Validate `/map` and TF against live data.
+The robot controller is on the wired LAN at `<robot-lan-ip>` and uses Agent
+`<hub-lan-ip>:8888`. The camera remains an independent HTTP source at
+`<camera-lan-ip>:81`.
 
-The camera can continue as an independent perception source while mapping is blocked.
+VMware NAT UDP forwarding was replaced by a server-side relay because the
+bidirectional micro-ROS session was unstable:
+
+```text
+<hub-lan-ip>:8888 -> <guest-ip>:8888
+```
+
+The ROS-side mux, 200 ms watchdog, lease path, ESP32 command ingress, and motor
+output were verified after restoring 2S battery power:
+
+- forward and backward odometry changes
+- left turn yaw change
+- right arc translation and yaw change
+- zero velocity and disarm after every pulse
+
+Residual issue: a pure negative angular command intermittently did not appear on
+`/cmd_vel_safe_raw`, while a right arc command passed. Turn-only autonomy remains
+blocked until this path is reproducible.
 
 ## Security Findings
 
-- The current CLI passes SSH and guest passwords through process arguments. Do not expose it directly to an LLM or record its command lines.
-- Vendor-specific IPs, VM paths, host key, and camera address are hard-coded defaults. They must be moved to local configuration before publishing the XuegerOS repository.
-- `publish-cmd-vel` requires explicit confirmation, but still has no end-to-end deadman guarantee.
-- `stop-motion` is a safety aid, not a replacement for a physical emergency stop.
+- Resolved: the maintenance CLI no longer accepts or places passwords in process arguments. It uses SSH keys and a local OpenSSH ProxyCommand for guest access.
+- Resolved: vendor-specific IPs, VM paths, and camera addresses now live in an ignored local configuration file.
+- Resolved: motion was removed from the maintenance CLI and moved to a separately started, disabled-by-default, shadow-mode gateway.
+- Open: shadow mode has no physical command backend. Physical output stays blocked until the ROS safety package is deployed and validated.
+- Open: the firmware still requires a real command watchdog. A one-shot stop command is not a deadman guarantee.
+- Mandatory: a physical emergency stop remains non-negotiable.
 
 ## Delivery Order
 
-1. Build a read-only XuegerOS adapter service.
+1. Deploy and connect the implemented read-only XuegerOS adapter service.
 2. Feed camera and robot health into Hub perception ingress.
 3. Add a read-only Robotics World for map/Nav2 state.
-4. Establish the micro-ROS client and validate `/scan`, `/odom`, and `/imu`.
-5. Add `twist_mux` plus watchdog in shadow mode.
-6. Test lifted-wheel motion with explicit confirmation.
-7. Only then expose constrained motion tools through the gateway.
+4. Completed: micro-ROS client, `/scan`, `/odom`, `/imu`, Gmapping, and `/map`.
+5. Deploy the implemented `twist_mux` plus watchdog in shadow mode.
+6. Completed: limited manual forward/backward/turn tests with safety receipts.
+7. Fix the pure-negative-turn mux anomaly, then expose constrained motion tools
+   through the gateway.
 
-Until steps 1 through 6 pass, the robot is observable but not autonomously movable.
+Until Hub integration and the remaining turn-only mux issue are resolved, the
+robot is manually testable but not autonomously movable.

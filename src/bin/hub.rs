@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     path::PathBuf,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -11,7 +11,7 @@ use std::{
 use axum::extract::ws::{Message as WsMessage, WebSocket};
 use axum::{
     extract::{Path, Query, State, WebSocketUpgrade},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Redirect},
     routing::{any, delete, get, post},
     Json, Router,
@@ -24,10 +24,15 @@ use absolute_solver::{
     adapters::{decode_wav_pcm16, AdapterConfig, ModelAdapters},
     cortico::CorticoEvent,
     memory::{MemoryError, MemoryHit, MemoryStore, MemoryWriteRequest},
-    now_ms, state_payload, trace_event_for_turn,
+    now_ms,
+    presence::{
+        ActivePresence, PendingPresence, PresenceManager, MAX_PRESENCE_TTL_MS, MIN_PRESENCE_TTL_MS,
+        PRESENCE_NOTIFY_SCOPE, PRESENCE_SHOW_SCOPE,
+    },
+    state_payload, trace_event_for_turn,
     wire::{
-        decode_client_message, BinaryMediaFrame, BinaryMediaKind, HubState, Message, StateName,
-        WireDecodeError, WireEnvelope,
+        decode_client_message, BinaryMediaFrame, BinaryMediaKind, HubState, Message,
+        PresenceUrgency, StateName, WireDecodeError, WireEnvelope,
     },
     SharedTrace, TraceWriter,
 };
@@ -51,7 +56,12 @@ struct Hub {
     cortico_sequences: Mutex<BTreeMap<(String, String), u64>>,
     cortico_monitor: Mutex<CorticoMonitorSnapshot>,
     cortico_monitor_config: CorticoMonitorConfig,
+    robotics_world: Mutex<RoboticsWorldSnapshot>,
+    robotics_world_url: String,
     host_tickets: Mutex<BTreeMap<String, u64>>,
+    presence: Mutex<PresenceManager>,
+    presence_hosts: BTreeSet<String>,
+    presence_token: String,
     host_panel_url: String,
     host_ws_url: String,
     memory: Arc<MemoryStore>,
@@ -82,6 +92,32 @@ struct MemorySearchQuery {
     q: String,
     #[serde(default = "default_memory_limit")]
     limit: usize,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct PresenceIntentRequest {
+    host_id: String,
+    reason: String,
+    #[serde(default = "default_presence_urgency")]
+    urgency: PresenceUrgency,
+    requested_scopes: Vec<String>,
+    ttl_ms: u64,
+}
+
+fn default_presence_urgency() -> PresenceUrgency {
+    PresenceUrgency::Normal
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct PresenceRevokeRequest {
+    host_id: String,
+    intent_id: String,
+    #[serde(default = "default_presence_revoke_reason")]
+    reason: String,
+}
+
+fn default_presence_revoke_reason() -> String {
+    "operator_revoked".into()
 }
 
 fn default_memory_limit() -> usize {
@@ -159,6 +195,7 @@ struct MonitorSnapshot {
     trace_events: usize,
     server_time_ms: u64,
     cortico_monitor: CorticoMonitorSnapshot,
+    robotics_world: RoboticsWorldSnapshot,
 }
 
 #[derive(Debug, Clone)]
@@ -210,6 +247,70 @@ struct CorticoMonitorSnapshot {
     usage: Option<serde_json::Value>,
     errors: Vec<serde_json::Value>,
     error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RoboticsWorldSnapshot {
+    configured: bool,
+    source: String,
+    checked_ms: Option<u64>,
+    ok: bool,
+    latency_ms: Option<u64>,
+    error: Option<String>,
+    camera_state: Option<String>,
+    inference_state: Option<String>,
+    frame_seq: Option<u64>,
+    frame_timestamp: Option<f64>,
+    frame_age_ms: Option<u64>,
+    dropped_frames: Option<u64>,
+    inference_latency_ms: Option<f64>,
+    inference_fps: Option<f64>,
+    detection_count: usize,
+    detections: Vec<serde_json::Value>,
+    status_available: Option<bool>,
+    mapping_available: Option<bool>,
+    navigation_available: Option<bool>,
+    mapping_healthy: Option<bool>,
+    navigation_ready: Option<bool>,
+    robot_vm_running: Option<bool>,
+    micro_ros_session_observed: Option<bool>,
+    raw_frame_available: bool,
+}
+
+impl RoboticsWorldSnapshot {
+    fn initial(source: String) -> Self {
+        let configured = !source.is_empty();
+        Self {
+            configured,
+            source,
+            checked_ms: None,
+            ok: false,
+            latency_ms: None,
+            error: Some(if configured {
+                "waiting for first Robotics World probe".into()
+            } else {
+                "Robotics World URL is not configured".into()
+            }),
+            camera_state: None,
+            inference_state: None,
+            frame_seq: None,
+            frame_timestamp: None,
+            frame_age_ms: None,
+            dropped_frames: None,
+            inference_latency_ms: None,
+            inference_fps: None,
+            detection_count: 0,
+            detections: Vec::new(),
+            status_available: None,
+            mapping_available: None,
+            navigation_available: None,
+            mapping_healthy: None,
+            navigation_ready: None,
+            robot_vm_running: None,
+            micro_ros_session_observed: None,
+            raw_frame_available: false,
+        }
+    }
 }
 
 impl Default for CorticoMonitorSnapshot {
@@ -339,6 +440,10 @@ impl Monitor {
             Message::SpeechEnd { turn, .. } => ("speech.end", Some(*turn), None, 0),
             Message::RenderCue { turn, .. } => ("render.cue", *turn, None, 0),
             Message::BodyHandoff { .. } => ("body.handoff", None, None, 0),
+            Message::PresenceIntent { .. } => ("presence.intent", None, None, 0),
+            Message::PresenceDecision { .. } => ("presence.decision", None, None, 0),
+            Message::PresenceGrant { .. } => ("presence.grant", None, None, 0),
+            Message::PresenceRevoke { .. } => ("presence.revoke", None, None, 0),
             Message::TurnStarted { turn } => ("turn.started", Some(*turn), None, 0),
             Message::ProtocolError { .. } => ("protocol.error", None, None, 0),
         };
@@ -500,6 +605,10 @@ fn body_receives_message(
         Message::Say { .. } | Message::RenderCue { .. } => {
             device_id.is_some() && device_id == active_body
         }
+        Message::PresenceIntent { host_id, .. }
+        | Message::PresenceGrant { host_id, .. }
+        | Message::PresenceRevoke { host_id, .. } => device_id == Some(host_id.as_str()),
+        Message::PresenceDecision { .. } => false,
         _ => true,
     }
 }
@@ -786,6 +895,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut monitor = Monitor::default();
     monitor.memory_items = memory.count().await?;
     let trace_path_display = trace_path.display().to_string();
+    let robotics_world_url = std::env::var("SOLVER_ROBOTICS_WORLD_URL")
+        .ok()
+        .and_then(|value| reqwest::Url::parse(value.trim()).ok())
+        .filter(|url| {
+            matches!(url.scheme(), "http" | "https")
+                && url.host_str().is_some()
+                && url.username().is_empty()
+                && url.password().is_none()
+                && url.query().is_none()
+                && url.fragment().is_none()
+        })
+        .map(|url| url.as_str().trim_end_matches('/').to_owned())
+        .unwrap_or_default();
     let hub = Arc::new(Hub {
         state: Mutex::new(initial_state),
         trace: TraceWriter::open(&trace_path).await?,
@@ -800,7 +922,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cortico_sequences: Mutex::new(BTreeMap::new()),
         cortico_monitor: Mutex::new(cortico_monitor),
         cortico_monitor_config,
+        robotics_world: Mutex::new(RoboticsWorldSnapshot::initial(robotics_world_url.clone())),
+        robotics_world_url,
         host_tickets: Mutex::new(BTreeMap::new()),
+        presence: Mutex::new(PresenceManager::default()),
+        presence_hosts: std::env::var("SOLVER_PRESENCE_HOSTS")
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|host| !host.is_empty())
+            .map(str::to_owned)
+            .collect(),
+        presence_token: std::env::var("SOLVER_PRESENCE_TOKEN").unwrap_or_default(),
         host_panel_url,
         host_ws_url,
         memory,
@@ -808,6 +941,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         trace_path: trace_path_display,
     });
     tokio::spawn(cortico_monitor_loop(hub.clone()));
+    tokio::spawn(robotics_world_loop(hub.clone()));
+    tokio::spawn(presence_expiry_loop(hub.clone()));
     let app = Router::new()
         .route("/ws", any(ws))
         .route("/state", get(state))
@@ -821,6 +956,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/memory/search", get(memory_search))
         .route("/memory/:id", delete(memory_delete))
         .route("/host/connect", get(host_connect))
+        .route("/presence/intent", post(presence_intent))
+        .route("/presence/revoke", post(presence_revoke))
         .with_state(AppState { hub });
     let listener = tokio::net::TcpListener::bind(&listen).await?;
     println!("Absolute Solver hub listening on {listen}");
@@ -892,6 +1029,349 @@ async fn host_connect(State(app): State<AppState>) -> axum::response::Response {
     Redirect::temporary(&target).into_response()
 }
 
+fn valid_presence_token(headers: &HeaderMap, expected: &str) -> bool {
+    if expected.is_empty() {
+        return false;
+    }
+    let Some(candidate) = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+    else {
+        return false;
+    };
+    constant_time_text_eq(candidate.as_bytes(), expected.as_bytes())
+}
+
+fn constant_time_text_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    left.iter()
+        .zip(right)
+        .fold(0u8, |difference, (a, b)| difference | (a ^ b))
+        == 0
+}
+
+async fn presence_intent(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<PresenceIntentRequest>,
+) -> axum::response::Response {
+    if !valid_presence_token(&headers, &app.hub.presence_token) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error":"unauthorized"})),
+        )
+            .into_response();
+    }
+    if !app.hub.presence_hosts.contains(&request.host_id) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error":"host_not_authorized"})),
+        )
+            .into_response();
+    }
+    if !(MIN_PRESENCE_TTL_MS..=MAX_PRESENCE_TTL_MS).contains(&request.ttl_ms) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error":"invalid_ttl"})),
+        )
+            .into_response();
+    }
+    let reason = request.reason.trim();
+    if reason.is_empty() || reason.chars().count() > 240 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error":"invalid_reason"})),
+        )
+            .into_response();
+    }
+    let mut scopes = BTreeSet::new();
+    if request.requested_scopes.len() > 2
+        || request.requested_scopes.iter().any(|scope| {
+            if scope != PRESENCE_NOTIFY_SCOPE && scope != PRESENCE_SHOW_SCOPE {
+                return true;
+            }
+            scopes.insert(scope.as_str());
+            false
+        })
+        || !scopes.contains(PRESENCE_NOTIFY_SCOPE)
+        || (scopes.contains(PRESENCE_SHOW_SCOPE) && !scopes.contains(PRESENCE_NOTIFY_SCOPE))
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error":"invalid_scopes"})),
+        )
+            .into_response();
+    }
+    let device = app
+        .hub
+        .monitor
+        .lock()
+        .await
+        .devices
+        .get(&request.host_id)
+        .cloned();
+    let Some(device) = device.filter(|device| device.connected) else {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error":"host_offline"})),
+        )
+            .into_response();
+    };
+    if !device
+        .caps
+        .as_ref()
+        .and_then(|caps| caps.get("host_presence"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+    {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error":"host_presence_unsupported"})),
+        )
+            .into_response();
+    }
+    let now = wall_ms();
+    let expires_at_ms = now.saturating_add(request.ttl_ms);
+    let intent_id = format!(
+        "presence-{now}-{}",
+        HOST_TICKET_SEQ.fetch_add(1, Ordering::Relaxed)
+    );
+    let scopes: Vec<String> = scopes.into_iter().map(str::to_owned).collect();
+    app.hub.presence.lock().await.issue(
+        intent_id.clone(),
+        PendingPresence {
+            host_id: request.host_id.clone(),
+            scopes: scopes.clone(),
+            expires_at_ms,
+        },
+        now,
+    );
+    let message = Message::PresenceIntent {
+        intent_id: intent_id.clone(),
+        host_id: request.host_id.clone(),
+        reason: reason.to_owned(),
+        urgency: request.urgency,
+        requested_scopes: scopes.clone(),
+        expires_at_ms,
+    };
+    app.hub
+        .record(
+            "hub",
+            &message,
+            None,
+            format!(
+                "host={}; urgency={:?}; scopes={}; ttl_ms={}",
+                request.host_id,
+                request.urgency,
+                scopes.join(","),
+                request.ttl_ms
+            ),
+        )
+        .await;
+    let _ = app.hub.outbound.send(message);
+    (
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({"ok":true,"intent_id":intent_id,"expires_at_ms":expires_at_ms})),
+    )
+        .into_response()
+}
+
+async fn presence_revoke(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<PresenceRevokeRequest>,
+) -> axum::response::Response {
+    if !valid_presence_token(&headers, &app.hub.presence_token) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error":"unauthorized"})),
+        )
+            .into_response();
+    }
+    if !app.hub.presence_hosts.contains(&request.host_id) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error":"host_not_authorized"})),
+        )
+            .into_response();
+    }
+    if request.intent_id.len() > 96 || request.reason.len() > 96 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error":"invalid_revoke"})),
+        )
+            .into_response();
+    }
+    if !app
+        .hub
+        .presence
+        .lock()
+        .await
+        .revoke(&request.host_id, &request.intent_id)
+    {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error":"presence_not_active"})),
+        )
+            .into_response();
+    }
+    let message = Message::PresenceRevoke {
+        intent_id: request.intent_id,
+        host_id: request.host_id.clone(),
+        reason: request.reason,
+    };
+    app.hub
+        .record(
+            "hub",
+            &message,
+            None,
+            format!("host={}; operator revoke", request.host_id),
+        )
+        .await;
+    let _ = app.hub.outbound.send(message);
+    (StatusCode::OK, Json(serde_json::json!({"ok":true}))).into_response()
+}
+
+async fn handle_presence_decision(
+    hub: &Arc<Hub>,
+    direct_tx: &mpsc::Sender<Message>,
+    connected_host: Option<&str>,
+    message: Message,
+) {
+    let Message::PresenceDecision {
+        intent_id,
+        host_id,
+        decision,
+    } = &message
+    else {
+        return;
+    };
+    if connected_host != Some(host_id.as_str()) {
+        send_direct_message(
+            hub,
+            direct_tx,
+            Message::ProtocolError {
+                code: "presence_host_mismatch".into(),
+                message: "presence decision host does not match this connection".into(),
+                fatal: false,
+            },
+            "presence decision rejected",
+        )
+        .await;
+        return;
+    }
+    let result = hub
+        .presence
+        .lock()
+        .await
+        .decide(host_id, intent_id, *decision, wall_ms());
+    let active = match result {
+        Ok(active) => active,
+        Err(error) => {
+            send_direct_message(
+                hub,
+                direct_tx,
+                Message::ProtocolError {
+                    code: "presence_decision_rejected".into(),
+                    message: format!("presence decision rejected: {error:?}"),
+                    fatal: false,
+                },
+                "presence decision rejected",
+            )
+            .await;
+            return;
+        }
+    };
+    hub.record(
+        "body->hub",
+        &message,
+        None,
+        format!("host={host_id}; decision={decision:?}; intent={intent_id}"),
+    )
+    .await;
+    if let Some(ActivePresence { expires_at_ms, .. }) = active {
+        let grant = Message::PresenceGrant {
+            intent_id: intent_id.clone(),
+            host_id: host_id.clone(),
+            scope: PRESENCE_SHOW_SCOPE.into(),
+            expires_at_ms,
+        };
+        hub.record(
+            "hub",
+            &grant,
+            None,
+            format!("host={host_id}; scope={PRESENCE_SHOW_SCOPE}; lease granted"),
+        )
+        .await;
+        let _ = hub.outbound.send(grant);
+    }
+}
+
+async fn handle_presence_revoke(
+    hub: &Arc<Hub>,
+    direct_tx: &mpsc::Sender<Message>,
+    connected_host: Option<&str>,
+    message: Message,
+) {
+    let Message::PresenceRevoke {
+        intent_id,
+        host_id,
+        reason,
+    } = &message
+    else {
+        return;
+    };
+    if connected_host != Some(host_id.as_str())
+        || !hub.presence.lock().await.revoke(host_id, intent_id)
+    {
+        send_direct_message(
+            hub,
+            direct_tx,
+            Message::ProtocolError {
+                code: "presence_revoke_rejected".into(),
+                message: "presence revoke is not owned by this connection".into(),
+                fatal: false,
+            },
+            "presence revoke rejected",
+        )
+        .await;
+        return;
+    }
+    hub.record(
+        "body->hub",
+        &message,
+        None,
+        format!("host={host_id}; revoke={reason}"),
+    )
+    .await;
+    let _ = hub.outbound.send(message);
+}
+
+async fn presence_expiry_loop(hub: Arc<Hub>) {
+    loop {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        let expired = hub.presence.lock().await.prune(wall_ms());
+        for (host_id, active) in expired {
+            let message = Message::PresenceRevoke {
+                intent_id: active.intent_id,
+                host_id: host_id.clone(),
+                reason: "ttl_expired".into(),
+            };
+            hub.record(
+                "hub",
+                &message,
+                None,
+                format!("host={host_id}; presence TTL expired"),
+            )
+            .await;
+            let _ = hub.outbound.send(message);
+        }
+    }
+}
+
 fn query_encode(value: &str) -> String {
     let mut output = String::with_capacity(value.len());
     for byte in value.bytes() {
@@ -909,6 +1389,7 @@ async fn monitor_json(State(app): State<AppState>) -> Json<MonitorSnapshot> {
     let active_body = app.hub.active_body.lock().await.clone();
     let started_ms = monitor.started_ms;
     let cortico_monitor = app.hub.cortico_monitor.lock().await.clone();
+    let robotics_world = app.hub.robotics_world.lock().await.clone();
     let state = app.hub.state.lock().await.clone();
     let trace_events = app.hub.events.lock().await.len();
     Json(MonitorSnapshot {
@@ -926,6 +1407,7 @@ async fn monitor_json(State(app): State<AppState>) -> Json<MonitorSnapshot> {
         trace_events,
         server_time_ms: wall_ms(),
         cortico_monitor,
+        robotics_world,
     })
 }
 
@@ -948,6 +1430,185 @@ async fn cortico_monitor_loop(hub: Arc<Hub>) {
             15
         }))
         .await;
+    }
+}
+
+async fn robotics_world_loop(hub: Arc<Hub>) {
+    loop {
+        let snapshot = probe_robotics_world(&hub).await;
+        let configured = snapshot.configured;
+        *hub.robotics_world.lock().await = snapshot;
+        tokio::time::sleep(std::time::Duration::from_secs(if configured {
+            2
+        } else {
+            15
+        }))
+        .await;
+    }
+}
+
+async fn probe_robotics_world(hub: &Hub) -> RoboticsWorldSnapshot {
+    let source = hub.robotics_world_url.clone();
+    let mut snapshot = RoboticsWorldSnapshot::initial(source.clone());
+    if source.is_empty() {
+        return snapshot;
+    }
+    let started = std::time::Instant::now();
+    let response = match hub.http.get(format!("{source}/v1/world")).send().await {
+        Ok(response) => response,
+        Err(error) => {
+            snapshot.checked_ms = Some(wall_ms());
+            snapshot.latency_ms = Some(started.elapsed().as_millis() as u64);
+            snapshot.error = Some(format!("request failed: {error}"));
+            return snapshot;
+        }
+    };
+    let status = response.status();
+    if !status.is_success() {
+        snapshot.checked_ms = Some(wall_ms());
+        snapshot.latency_ms = Some(started.elapsed().as_millis() as u64);
+        snapshot.error = Some(format!("HTTP {status}"));
+        return snapshot;
+    }
+    if response
+        .content_length()
+        .is_some_and(|length| length > 256 * 1024)
+    {
+        snapshot.checked_ms = Some(wall_ms());
+        snapshot.error = Some("Robotics World response exceeds 256 KiB".into());
+        return snapshot;
+    }
+    let mut response = response;
+    let mut body = Vec::new();
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) if body.len() + chunk.len() <= 256 * 1024 => {
+                body.extend_from_slice(&chunk)
+            }
+            Ok(Some(_)) => {
+                snapshot.checked_ms = Some(wall_ms());
+                snapshot.error = Some("Robotics World response exceeds 256 KiB".into());
+                return snapshot;
+            }
+            Ok(None) => break,
+            Err(error) => {
+                snapshot.checked_ms = Some(wall_ms());
+                snapshot.error = Some(format!("response read failed: {error}"));
+                return snapshot;
+            }
+        }
+    }
+    match serde_json::from_slice::<serde_json::Value>(&body) {
+        Ok(value) => {
+            let projected = project_robotics_world(value);
+            snapshot = projected;
+            snapshot.source = source;
+            snapshot.configured = true;
+            snapshot.ok = true;
+            snapshot.checked_ms = Some(wall_ms());
+            snapshot.latency_ms = Some(started.elapsed().as_millis() as u64);
+            snapshot.error = None;
+        }
+        Err(error) => {
+            snapshot.checked_ms = Some(wall_ms());
+            snapshot.latency_ms = Some(started.elapsed().as_millis() as u64);
+            snapshot.error = Some(format!("invalid JSON: {error}"));
+        }
+    }
+    snapshot
+}
+
+fn project_robotics_world(value: serde_json::Value) -> RoboticsWorldSnapshot {
+    let vision = value.get("vision").unwrap_or(&serde_json::Value::Null);
+    let status = value.get("status").unwrap_or(&serde_json::Value::Null);
+    let micro_ros = status.get("micro_ros").unwrap_or(&serde_json::Value::Null);
+    let vm = status.get("vm").unwrap_or(&serde_json::Value::Null);
+    let mut detections = Vec::new();
+    if let Some(items) = vision
+        .get("detections")
+        .and_then(serde_json::Value::as_array)
+    {
+        for item in items.iter().take(20) {
+            let class = item
+                .get("class")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown");
+            let confidence = item
+                .get("confidence")
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or(0.0)
+                .clamp(0.0, 1.0);
+            let bbox = item.get("bbox").and_then(serde_json::Value::as_array);
+            let Some(bbox) = bbox.filter(|bbox| bbox.len() == 4) else {
+                continue;
+            };
+            let normalized: Option<Vec<f64>> = bbox
+                .iter()
+                .map(|coordinate| coordinate.as_f64().map(|value| value.clamp(0.0, 1.0)))
+                .collect();
+            if let Some(bbox) = normalized {
+                detections.push(serde_json::json!({
+                    "class": class.chars().take(40).collect::<String>(),
+                    "confidence": confidence,
+                    "bbox": bbox,
+                }));
+            }
+        }
+    }
+    let detection_count = detections.len();
+    RoboticsWorldSnapshot {
+        configured: true,
+        source: String::new(),
+        checked_ms: None,
+        ok: false,
+        latency_ms: None,
+        error: None,
+        camera_state: vision
+            .get("camera_state")
+            .and_then(serde_json::Value::as_str)
+            .map(|state| state.chars().take(32).collect()),
+        inference_state: vision
+            .get("inference_state")
+            .and_then(serde_json::Value::as_str)
+            .map(|state| state.chars().take(32).collect()),
+        frame_seq: vision.get("frame_seq").and_then(serde_json::Value::as_u64),
+        frame_timestamp: vision
+            .get("frame_timestamp")
+            .and_then(serde_json::Value::as_f64),
+        frame_age_ms: vision
+            .get("frame_age_ms")
+            .and_then(serde_json::Value::as_u64),
+        dropped_frames: vision
+            .get("dropped_frames")
+            .and_then(serde_json::Value::as_u64),
+        inference_latency_ms: vision
+            .get("inference_latency_ms")
+            .and_then(serde_json::Value::as_f64),
+        inference_fps: vision
+            .get("inference_fps")
+            .and_then(serde_json::Value::as_f64),
+        detection_count,
+        detections,
+        status_available: value
+            .get("status_available")
+            .and_then(serde_json::Value::as_bool),
+        mapping_available: value
+            .get("mapping_available")
+            .and_then(serde_json::Value::as_bool),
+        navigation_available: value
+            .get("navigation_available")
+            .and_then(serde_json::Value::as_bool),
+        mapping_healthy: value
+            .pointer("/mapping/mapping_healthy")
+            .and_then(serde_json::Value::as_bool),
+        navigation_ready: value
+            .pointer("/navigation/navigation_ready")
+            .and_then(serde_json::Value::as_bool),
+        robot_vm_running: vm.get("running").and_then(serde_json::Value::as_bool),
+        micro_ros_session_observed: micro_ros
+            .get("session_observed")
+            .and_then(serde_json::Value::as_bool),
+        raw_frame_available: false,
     }
 }
 
@@ -1293,7 +1954,12 @@ async fn cortico_event(
                 state.since_ms = now_ms();
                 state.reason = "Cortico Persona expression".into();
             }
-            tokio::spawn(process_persona_expression(app.hub.clone(), turn, prompt));
+            tokio::spawn(process_persona_expression(
+                app.hub.clone(),
+                turn,
+                prompt,
+                event.payload.clone(),
+            ));
         }
     }
     (
@@ -1308,11 +1974,94 @@ async fn cortico_event(
     )
 }
 
-async fn process_persona_expression(hub: Arc<Hub>, turn: u64, answer: String) {
+async fn process_persona_expression(
+    hub: Arc<Hub>,
+    turn: u64,
+    answer: String,
+    payload: serde_json::Value,
+) {
     if !turn_is_current(&hub, turn).await {
         record_stale_turn(&hub, turn).await;
         return;
     }
+
+    // === PRESENCE METADATA HANDLING ===
+    if let Some(metadata) = payload.get("metadata") {
+        let urgency = metadata.get("urgency").and_then(|v| v.as_str());
+        let target_device = metadata.get("target_device").and_then(|v| v.as_str());
+        let reason = metadata
+            .get("reason")
+            .and_then(|v| v.as_str())
+            .unwrap_or(answer.as_str());
+
+        if let (Some(urgency_str), Some(target_device_str)) = (urgency, target_device) {
+            let ttl_ms = match urgency_str {
+                "high" => 30_000,
+                "low" => 120_000,
+                _ => 60_000,
+            };
+
+            // Check if device is in allowlist and online
+            if hub.presence_hosts.contains(target_device_str) {
+                let device = hub
+                    .monitor
+                    .lock()
+                    .await
+                    .devices
+                    .get(target_device_str)
+                    .cloned();
+
+                if device.as_ref().is_some_and(|d| d.connected) {
+                    let intent_id = format!("intent-{}", uuid::Uuid::new_v4());
+                    let expires_at_ms = now_ms() + ttl_ms;
+
+                    let intent = absolute_solver::presence::PendingPresence {
+                        host_id: target_device_str.to_owned(),
+                        scopes: vec![
+                            absolute_solver::presence::PRESENCE_NOTIFY_SCOPE.to_owned(),
+                            absolute_solver::presence::PRESENCE_SHOW_SCOPE.to_owned(),
+                        ],
+                        expires_at_ms,
+                    };
+
+                    hub.presence
+                        .lock()
+                        .await
+                        .issue(intent_id.clone(), intent, now_ms());
+
+                    let urgency_enum = match urgency_str {
+                        "high" => PresenceUrgency::High,
+                        "low" => PresenceUrgency::Low,
+                        _ => PresenceUrgency::Normal,
+                    };
+
+                    let message = Message::PresenceIntent {
+                        intent_id: intent_id.clone(),
+                        host_id: target_device_str.to_owned(),
+                        reason: reason.to_owned(),
+                        urgency: urgency_enum,
+                        requested_scopes: vec![
+                            absolute_solver::presence::PRESENCE_NOTIFY_SCOPE.to_owned(),
+                            absolute_solver::presence::PRESENCE_SHOW_SCOPE.to_owned(),
+                        ],
+                        expires_at_ms,
+                    };
+
+                    hub.record(
+                        "hub->host",
+                        &message,
+                        Some(turn),
+                        format!("persona-driven urgency={urgency_str} device={target_device_str}"),
+                    )
+                    .await;
+
+                    let _ = hub.outbound.send(message);
+                }
+            }
+        }
+    }
+    // === END PRESENCE METADATA HANDLING ===
+
     let tts_started = std::time::Instant::now();
     hub.monitor.lock().await.tts_calls += 1;
     let (pcm, sample_rate, degraded, note) = match hub.adapters.synthesize(&answer).await {
@@ -1712,9 +2461,18 @@ async fn handle_socket(socket: WebSocket, hub: Arc<Hub>) {
                     .await;
                 tokio::spawn(process_turn(hub.clone(), turn, pending));
             }
+            Message::PresenceDecision { .. } => {
+                handle_presence_decision(&hub, &direct_tx, connected_device.as_deref(), message)
+                    .await;
+            }
+            Message::PresenceRevoke { .. } => {
+                handle_presence_revoke(&hub, &direct_tx, connected_device.as_deref(), message)
+                    .await;
+            }
             Message::Say { .. } => {}
             Message::RenderCue { .. } => {}
             Message::BodyHandoff { .. } => {}
+            Message::PresenceIntent { .. } | Message::PresenceGrant { .. } => {}
             Message::TurnStarted { .. } | Message::ProtocolError { .. } => {}
         }
     }
@@ -2449,7 +3207,12 @@ mod tests {
                     url: String::new(),
                     cookie: String::new(),
                 },
+                robotics_world: Mutex::new(RoboticsWorldSnapshot::initial(String::new())),
+                robotics_world_url: String::new(),
                 host_tickets: Mutex::new(BTreeMap::new()),
+                presence: Mutex::new(PresenceManager::default()),
+                presence_hosts: BTreeSet::new(),
+                presence_token: String::new(),
                 host_panel_url: "http://127.0.0.1:5274/".into(),
                 host_ws_url: "ws://127.0.0.1:18100/ws".into(),
                 memory: Arc::new(MemoryStore::open(":memory:").unwrap()),
@@ -2458,6 +3221,85 @@ mod tests {
             }),
             trace_path,
         )
+    }
+
+    #[test]
+    fn robotics_world_projection_bounds_detections_and_drops_raw_fields() {
+        let payload = json!({
+            "status": {"vm":{"running":true},"micro_ros":{"session_observed":true}},
+            "mapping":{"mapping_healthy":true},
+            "navigation":{"navigation_ready":false},
+            "vision": {
+                "camera_state":"streaming",
+                "frame_seq":12,
+                "frame_age_ms":40,
+                "dropped_frames":4,
+                "inference_latency_ms":190.5,
+                "inference_fps":5.2,
+                "raw_jpeg":"must never be projected",
+                "detections":(0..25).map(|index| json!({
+                    "class":format!("object-{index}"),
+                    "confidence":1.4,
+                    "bbox":[-1.0,0.1,0.5,2.0]
+                })).collect::<Vec<_>>()
+            },
+            "raw_frame":"must never be projected"
+        });
+        let projected = project_robotics_world(payload);
+        let serialized = serde_json::to_value(&projected).unwrap();
+        assert_eq!(projected.detection_count, 20);
+        assert_eq!(projected.camera_state.as_deref(), Some("streaming"));
+        assert_eq!(projected.mapping_healthy, Some(true));
+        assert_eq!(projected.navigation_ready, Some(false));
+        assert_eq!(projected.detections[0]["confidence"], 1.0);
+        assert_eq!(projected.detections[0]["bbox"], json!([0.0, 0.1, 0.5, 1.0]));
+        assert!(!projected.raw_frame_available);
+        assert!(serialized.get("raw_jpeg").is_none());
+        assert!(serialized.get("raw_frame").is_none());
+    }
+
+    async fn mock_robotics_world() -> Json<Value> {
+        Json(json!({
+            "status": {"vm":{"running":true},"micro_ros":{"session_observed":true}},
+            "mapping":{"mapping_healthy":true},
+            "navigation":{"navigation_ready":false},
+            "vision": {
+                "camera_state":"streaming",
+                "inference_state":"ready",
+                "frame_seq":17,
+                "frame_age_ms":25,
+                "dropped_frames":6,
+                "inference_latency_ms":60.0,
+                "inference_fps":16.6,
+                "detections":[{"class":"person","confidence":0.9,"bbox":[0.1,0.2,0.4,0.8]}],
+                "raw_frame":"must be discarded"
+            }
+        }))
+    }
+
+    #[tokio::test]
+    async fn robotics_world_probe_fetches_only_a_bounded_projection() {
+        let router = Router::new().route("/v1/world", get(mock_robotics_world));
+        let (url, server) = mock_server(router).await;
+        let adapters = test_adapters(String::new(), String::new(), String::new());
+        let (mut hub, trace_path) = test_hub(adapters).await;
+        Arc::get_mut(&mut hub)
+            .expect("test hub has one owner")
+            .robotics_world_url = url;
+
+        let snapshot = probe_robotics_world(&hub).await;
+        assert!(snapshot.ok);
+        assert_eq!(snapshot.detection_count, 1);
+        assert_eq!(snapshot.inference_state.as_deref(), Some("ready"));
+        assert_eq!(snapshot.dropped_frames, Some(6));
+        assert!(!snapshot.raw_frame_available);
+        assert!(serde_json::to_string(&snapshot).unwrap().contains("person"));
+        assert!(!serde_json::to_string(&snapshot)
+            .unwrap()
+            .contains("must be discarded"));
+        server.abort();
+        drop(hub);
+        tokio::fs::remove_file(trace_path).await.unwrap();
     }
 
     #[tokio::test]
@@ -2514,6 +3356,102 @@ mod tests {
         };
         assert_eq!(active_body.as_deref(), Some("body-b"));
 
+        drop(receiver);
+        drop(hub);
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        tokio::fs::remove_file(trace_path).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn presence_intent_requires_service_auth_and_only_targets_an_allowed_host() {
+        let adapters = test_adapters(String::new(), String::new(), String::new());
+        let (mut hub, trace_path) = test_hub(adapters).await;
+        let inner = Arc::get_mut(&mut hub).expect("test hub has one owner");
+        inner.presence_token = "test-presence-secret".into();
+        inner.presence_hosts.insert("host-a".into());
+        inner
+            .monitor
+            .get_mut()
+            .register_device("host-a", json!({"host_presence":true}));
+        let mut receiver = hub.outbound.subscribe();
+        let request = PresenceIntentRequest {
+            host_id: "host-a".into(),
+            reason: "private visit detail must not enter trace".into(),
+            urgency: PresenceUrgency::Normal,
+            requested_scopes: vec![PRESENCE_NOTIFY_SCOPE.into(), PRESENCE_SHOW_SCOPE.into()],
+            ttl_ms: 10_000,
+        };
+        let unauthorized = presence_intent(
+            State(AppState { hub: hub.clone() }),
+            HeaderMap::new(),
+            Json(PresenceIntentRequest {
+                host_id: request.host_id.clone(),
+                reason: request.reason.clone(),
+                urgency: request.urgency,
+                requested_scopes: request.requested_scopes.clone(),
+                ttl_ms: request.ttl_ms,
+            }),
+        )
+        .await;
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer test-presence-secret".parse().unwrap(),
+        );
+        let oversized_scopes = presence_intent(
+            State(AppState { hub: hub.clone() }),
+            headers.clone(),
+            Json(PresenceIntentRequest {
+                host_id: "host-a".into(),
+                reason: "bounded scopes".into(),
+                urgency: PresenceUrgency::Normal,
+                requested_scopes: vec![
+                    PRESENCE_NOTIFY_SCOPE.into(),
+                    PRESENCE_SHOW_SCOPE.into(),
+                    "unexpected:scope".into(),
+                ],
+                ttl_ms: 10_000,
+            }),
+        )
+        .await;
+        assert_eq!(oversized_scopes.status(), StatusCode::BAD_REQUEST);
+        let accepted =
+            presence_intent(State(AppState { hub: hub.clone() }), headers, Json(request)).await;
+        assert_eq!(accepted.status(), StatusCode::ACCEPTED);
+        let Message::PresenceIntent {
+            host_id, reason, ..
+        } = receiver.recv().await.unwrap()
+        else {
+            panic!("expected presence intent")
+        };
+        assert_eq!(host_id, "host-a");
+        assert!(body_receives_message(
+            &Message::PresenceIntent {
+                intent_id: "x".into(),
+                host_id: "host-a".into(),
+                reason,
+                urgency: PresenceUrgency::Normal,
+                requested_scopes: vec![PRESENCE_NOTIFY_SCOPE.into()],
+                expires_at_ms: wall_ms() + 1000,
+            },
+            Some("host-a"),
+            None,
+        ));
+        assert!(!body_receives_message(
+            &Message::PresenceGrant {
+                intent_id: "x".into(),
+                host_id: "host-a".into(),
+                scope: PRESENCE_SHOW_SCOPE.into(),
+                expires_at_ms: wall_ms() + 1000,
+            },
+            Some("host-b"),
+            None,
+        ));
+        let trace = tokio::fs::read_to_string(&trace_path).await.unwrap();
+        assert!(trace.contains("presence.intent"));
+        assert!(!trace.contains("private visit detail"));
         drop(receiver);
         drop(hub);
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;

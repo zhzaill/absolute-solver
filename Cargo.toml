@@ -1,6 +1,6 @@
 [package]
 name = "absolute-solver"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 description = "Absolute Solver hub monitor and reconnecting body client"
 
@@ -16,6 +16,7 @@ serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "net", "fs", "io-util"] }
 tokio-tungstenite = "0.24"
+uuid = { version = "1", features = ["v4"] }
 
 [[bin]]
 name = "absolute-solver-hub"

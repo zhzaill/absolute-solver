@@ -1,5 +1,23 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "PresenceDecisionKind": {
+      "enum": [
+        "notify",
+        "appear",
+        "reject"
+      ],
+      "type": "string"
+    },
+    "PresenceUrgency": {
+      "enum": [
+        "low",
+        "normal",
+        "high"
+      ],
+      "type": "string"
+    }
+  },
   "oneOf": [
     {
       "properties": {
@@ -220,6 +238,133 @@
         }
       },
       "required": [
+        "reason",
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "expires_at_ms": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "intent_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "requested_scopes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "enum": [
+            "presence.intent"
+          ],
+          "type": "string"
+        },
+        "urgency": {
+          "$ref": "#/definitions/PresenceUrgency"
+        }
+      },
+      "required": [
+        "expires_at_ms",
+        "host_id",
+        "intent_id",
+        "reason",
+        "requested_scopes",
+        "type",
+        "urgency"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "decision": {
+          "$ref": "#/definitions/PresenceDecisionKind"
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "intent_id": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "presence.decision"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "decision",
+        "host_id",
+        "intent_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "expires_at_ms": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "intent_id": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "presence.grant"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "expires_at_ms",
+        "host_id",
+        "intent_id",
+        "scope",
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "host_id": {
+          "type": "string"
+        },
+        "intent_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "presence.revoke"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "host_id",
+        "intent_id",
         "reason",
         "type"
       ],

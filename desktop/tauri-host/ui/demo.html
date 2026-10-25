@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Absolute Solver Host - Visual Demo</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .demo-controls {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      z-index: 9999;
+      background: rgba(11, 20, 36, 0.95);
+      border: 1px solid var(--edge);
+      border-radius: 6px;
+      padding: 16px;
+      backdrop-filter: blur(8px);
+      font-size: 12px;
+      max-width: 280px;
+    }
+    .demo-controls h3 {
+      margin: 0 0 12px;
+      font-size: 14px;
+      color: var(--cyan);
+    }
+    .demo-controls button {
+      width: 100%;
+      margin: 6px 0;
+      padding: 8px;
+      font-size: 12px;
+    }
+    .demo-controls p {
+      margin: 8px 0 4px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+  </style>
+</head>
+<body>
+  <div class="demo-controls">
+    <h3>🎬 视觉效果演示</h3>
+    <button onclick="showOverlay()">显示全屏覆盖层</button>
+    <button onclick="hideOverlay()">隐藏覆盖层</button>
+    <p>字幕测试：</p>
+    <button onclick="testSubtitle1()">短消息</button>
+    <button onclick="testSubtitle2()">长消息</button>
+    <button onclick="testSubtitle3()">多行消息</button>
+    <p>TTL 测试：</p>
+    <button onclick="setTTL(30)">30 秒租约</button>
+    <button onclick="setTTL(60)">60 秒租约</button>
+    <button onclick="setTTL(120)">120 秒租约</button>
+    <p style="margin-top:12px;padding-top:10px;border-top:1px solid var(--edge);">
+      提示：在真实环境中，覆盖层由 Hub 通过 WebSocket 触发。此页面仅用于预览视觉效果。
+    </p>
+  </div>
+
+  <main id="settings-view">
+    <header>
+      <div class="sigil" aria-hidden="true">A</div>
+      <div>
+        <p class="eyebrow">ABSOLUTE SOLVER / HOST</p>
+        <h1>本机连接</h1>
+      </div>
+      <span class="state ok">演示模式</span>
+    </header>
+    <section class="form">
+      <label>Hub WebSocket 地址<input value="ws://127.0.0.1:18100/ws" readonly></label>
+      <label>本机身份<input value="demo-host-12ab34" readonly></label>
+      <label>到达策略
+        <select disabled>
+          <option value="appear" selected>允许限时全屏到达</option>
+        </select>
+      </label>
+      <p class="note">这是纯视觉演示页面，使用左上角按钮测试各种效果。</p>
+    </section>
+    <section class="activity">
+      <span class="pixel"></span>
+      <div>
+        <b>演示环境</b>
+        <p>所有功能均为前端预览，无真实连接</p>
+      </div>
+    </section>
+  </main>
+
+  <main id="overlay-view" hidden>
+    <div class="matrix-bg" id="matrix-bg"></div>
+    <div class="scan"></div>
+    <div class="overlay-sigil" aria-hidden="true">
+      A
+      <div class="energy-ring"></div>
+    </div>
+    <p class="eyebrow">ABSOLUTE SOLVER / TEMPORARY PRESENCE</p>
+    <h1>我在这里</h1>
+    <p id="overlay-reason" class="reason">紧急系统通知需要您的注意</p>
+    <div class="ttl">
+      <span id="overlay-ttl-text">连接租约有效</span>
+      <div class="ttl-bar"><div class="ttl-fill" id="ttl-fill" style="width:75%"></div></div>
+    </div>
+    <button id="revoke" onclick="hideOverlay()">结束并撤销</button>
+    <div class="subtitle-area" id="subtitle-area" style="display:none">
+      <div class="subtitle-text" id="subtitle-text"></div>
+    </div>
+    <div class="permissions-badge">
+      <div class="perm-item"><span class="perm-dot"></span> presence:show</div>
+      <div class="perm-item" style="opacity:0.5"><span class="perm-dot" style="background:#555;box-shadow:none"></span> camera (未授予)</div>
+      <div class="perm-item" style="opacity:0.5"><span class="perm-dot" style="background:#555;box-shadow:none"></span> microphone (未授予)</div>
+    </div>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let matrixInterval = null;
+    let ttlUpdater = null;
+    let demoExpiresAt = 0;
+    const matrixChars = '01アイウエオカキクセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+    function showOverlay() {
+      $('settings-view').hidden = true;
+      $('overlay-view').hidden = false;
+      initMatrixEffect();
+      if (demoExpiresAt === 0) setTTL(30);
+    }
+
+    function hideOverlay() {
+      $('settings-view').hidden = false;
+      $('overlay-view').hidden = true;
+      stopMatrixEffect();
+      $('subtitle-area').style.display = 'none';
+      if (ttlUpdater) {
+        clearInterval(ttlUpdater);
+        ttlUpdater = null;
+      }
+    }
+
+    function initMatrixEffect() {
+      stopMatrixEffect();
+      const container = $('matrix-bg');
+      container.innerHTML = '';
+      const columnCount = Math.floor(window.innerWidth / 20);
+      for (let i = 0; i < columnCount; i++) {
+        const column = document.createElement('div');
+        column.className = 'matrix-col';
+        column.style.left = `${i * 20}px`;
+        column.style.animationDuration = `${8 + Math.random() * 8}s`;
+        column.style.animationDelay = `${Math.random() * 5}s`;
+        const length = 10 + Math.floor(Math.random() * 15);
+        let text = '';
+        for (let j = 0; j < length; j++) {
+          text += matrixChars[Math.floor(Math.random() * matrixChars.length)] + '\n';
+        }
+        column.textContent = text;
+        container.appendChild(column);
+      }
+      matrixInterval = setInterval(() => {
+        document.querySelectorAll('.matrix-col').forEach(col => {
+          const length = 10 + Math.floor(Math.random() * 15);
+          let text = '';
+          for (let j = 0; j < length; j++) {
+            text += matrixChars[Math.floor(Math.random() * matrixChars.length)] + '\n';
+          }
+          col.textContent = text;
+        });
+      }, 3000);
+    }
+
+    function stopMatrixEffect() {
+      if (matrixInterval) {
+        clearInterval(matrixInterval);
+        matrixInterval = null;
+      }
+    }
+
+    function setTTL(seconds) {
+      const startedAt = Date.now();
+      demoExpiresAt = startedAt + seconds * 1000;
+      if (ttlUpdater) clearInterval(ttlUpdater);
+      updateTTLBar();
+      ttlUpdater = setInterval(updateTTLBar, 1000);
+    }
+
+    function updateTTLBar() {
+      const now = Date.now();
+      const total = demoExpiresAt - (demoExpiresAt - 30000);
+      const remaining = demoExpiresAt - now;
+      const percentage = Math.max(0, Math.min(100, (remaining / total) * 100));
+      const fill = $('ttl-fill');
+      if (fill) fill.style.width = `${percentage}%`;
+      if (remaining > 0) {
+        const seconds = Math.ceil(remaining / 1000);
+        $('overlay-ttl-text').textContent = `租约剩余 ${seconds} 秒`;
+      } else {
+        $('overlay-ttl-text').textContent = '租约已过期';
+        if (ttlUpdater) {
+          clearInterval(ttlUpdater);
+          ttlUpdater = null;
+        }
+      }
+    }
+
+    function showSubtitle(text, duration = 5000) {
+      const area = $('subtitle-area');
+      const textEl = $('subtitle-text');
+      area.style.display = 'block';
+      textEl.textContent = '';
+      let index = 0;
+      const speed = Math.max(30, Math.min(80, duration / text.length));
+      const typeInterval = setInterval(() => {
+        if (index < text.length) {
+          textEl.textContent += text[index];
+          index++;
+        } else {
+          clearInterval(typeInterval);
+          setTimeout(() => {
+            area.style.display = 'none';
+          }, 2000);
+        }
+      }, speed);
+    }
+
+    function testSubtitle1() {
+      showSubtitle('系统状态正常，所有服务运行中。');
+    }
+
+    function testSubtitle2() {
+      showSubtitle('正在建立安全连接... 所有操作均在本地权限租约范围内进行，您可以随时撤销访问。', 8000);
+    }
+
+    function testSubtitle3() {
+      showSubtitle('检测到异常网络活动。\n正在启动防护措施...\n已隔离可疑连接。', 6000);
+    }
+
+    // 初始化演示
+    console.log('Absolute Solver Host - Visual Demo\n使用左上角控制面板测试效果');
+  </script>
+</body>
+</html>

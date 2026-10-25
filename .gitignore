@@ -1,4 +1,6 @@
 /target/
+/desktop/tauri-host/target/
+/desktop/tauri-host/gen/
 /data/
 /trace/*.jsonl
 /artifacts/
@@ -16,6 +18,22 @@
 /monitor.cmd
 /tools/live2d-stage-server.mjs
 /tools/gen-stage-importmap.mjs
+/*.b64
+/DEPLOY*
+/MANUAL_DEPLOY.md
+/deploy-to-server*.ps1
+/copy-to-server.ps1
+/generated_host_id.txt
+/host_id_clean.txt
+/test-presence-local.ps1
+/docs/logs/
+/proto/
+/docs/GRPC_*.md
+/docs/PRESENCE_*.md
+/docs/PROTOCOL_OPTIMIZATION_PLAN.md
+/docs/WIRE_PROTOCOL_V2.md
+/desktop/tauri-host/QUICKSTART.md
+/desktop/tauri-host/INTEGRATION_GUIDE.md
 
 # Local agent/runtime state
 /.agents/

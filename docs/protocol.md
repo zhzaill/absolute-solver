@@ -265,6 +265,64 @@ Accepts versioned Persona and World events. Replay detection is scoped by `(sess
 
 Creates a short-lived one-time Host Panel invite and redirects to the local panel.
 
+### Host presence
+
+Host presence requests are disabled unless the Hub is configured with both
+`SOLVER_PRESENCE_TOKEN` and an explicit comma-separated `SOLVER_PRESENCE_HOSTS`
+allowlist. These environment variables are service-side configuration and must
+not be sent to a desktop client.
+
+`POST /presence/intent` requires `Authorization: Bearer <service-token>` and a
+JSON body:
+
+```json
+{
+  "host_id": "desktop-a",
+  "reason": "The operator requested a connection",
+  "urgency": "normal",
+  "requested_scopes": ["presence:notify", "presence:show"],
+  "ttl_ms": 30000
+}
+```
+
+Only allowlisted, connected Hosts advertising `host_presence: true` can receive
+an intent. TTL is limited to 1-120 seconds. The Hub sends `presence.intent` only
+to that Host. A Host responds with `presence.decision` and one of `reject`,
+`notify`, or `appear`; `appear` consumes the one-time intent and creates a
+`presence:show` lease. The Hub then sends `presence.grant` to that Host. The
+Host's local policy must also explicitly allow appearance before showing an
+overlay. No presence grant authorizes camera, microphone, files, or motion.
+
+`POST /presence/revoke` uses the same service authorization and accepts
+`{"host_id":"desktop-a","intent_id":"...","reason":"operator_revoke"}`.
+An active lease expires at its original intent deadline; the Hub emits
+`presence.revoke` on explicit revoke or expiry. Intent reasons are not copied
+into trace records. Presence trace entries contain event, Host, scope, urgency,
+decision, and timing metadata only.
+
+The `presence.intent`, `presence.decision`, `presence.grant`, and
+`presence.revoke` WebSocket messages are v1 messages and do not allocate a Hub
+turn. Decisions and client revokes are accepted only from the connection whose
+registered device ID matches `host_id`.
+
+### Read-only Robotics World
+
+The XuegerOS Body Adapter exposes `GET /v1/world` as a read-only projection of
+bounded robot status, mapping/navigation health, and the latest YOLO
+`VisionObservation`. `GET /v1/observations/latest` contains structured
+detections only: normalized bounding boxes, class, confidence, frame sequence,
+timestamp, camera state, frame age, dropped frames, inference latency, and
+detection count. It never returns a JPEG reference or raw frame. Camera frames
+and inference tensors are volatile memory only; stale or disconnected camera
+state clears detections. VM and map health probes run independently, so a
+sleeping or unreachable VM does not block a fresh camera observation.
+`autonomous_motion_allowed` remains `false`.
+
+Configure the Hub poll target with `SOLVER_ROBOTICS_WORLD_URL`, for example
+`http://127.0.0.1:18110` when the adapter runs on the Hub host. If the adapter
+runs elsewhere, bind it only to a trusted private interface and allow Hub access
+through the host firewall.
+
 ### Memory
 
 - `POST /memory/write`

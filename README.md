@@ -7,7 +7,7 @@ The Hub owns turns, body routing, permissions, model adapters, memory, and obser
 ## Status
 
 - Protocol: **v1** with optional PCM16 binary media
-- Crate version: **0.2.1**
+- Crate version: **0.3.0**
 - Runtime: Rust 2021, Tokio, Axum WebSocket
 - Deployment target: trusted LAN; authentication is not implemented yet
 - Display layer: optional Host Panel or Live2D prototype; Live2D is not required by the protocol

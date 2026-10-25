@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Absolute Solver Host</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="main.js"></script>
+</head>
+<body>
+  <main id="settings-view">
+    <header><div class="sigil" aria-hidden="true">A</div><div><p class="eyebrow">ABSOLUTE SOLVER / HOST</p><h1>本机连接</h1></div><span id="connection" class="state">正在启动</span></header>
+    <section class="form">
+      <label>Hub WebSocket 地址<input id="hub-url" spellcheck="false"></label>
+      <label>本机身份<input id="host-id" readonly></label>
+      <label>到达策略<select id="policy"><option value="reject">拒绝所有到达</option><option value="notify">仅系统通知</option><option value="appear">允许限时全屏到达</option></select></label>
+      <button id="save">保存设置并重连</button>
+      <p class="note">全屏到达仅在本机策略允许且请求含 <code>presence:show</code> 时生效。所有显示均有期限，可随时撤销。</p>
+    </section>
+    <section class="activity"><span class="pixel"></span><div><b id="activity-title">等待 Hub 请求</b><p id="activity-detail">本机默认只接受系统通知</p></div></section>
+  </main>
+  <main id="overlay-view" hidden>
+    <div class="matrix-bg" id="matrix-bg"></div>
+    <div class="scan"></div>
+    <div class="overlay-sigil" aria-hidden="true">
+      A
+      <div class="energy-ring"></div>
+    </div>
+    <p class="eyebrow">ABSOLUTE SOLVER / TEMPORARY PRESENCE</p>
+    <h1>我在这里</h1>
+    <p id="overlay-reason" class="reason"></p>
+    <div class="ttl">
+      <span id="overlay-ttl-text">连接租约有效</span>
+      <div class="ttl-bar"><div class="ttl-fill" id="ttl-fill"></div></div>
+    </div>
+    <button id="revoke">结束并撤销</button>
+    <div class="subtitle-area" id="subtitle-area" style="display:none">
+      <div class="subtitle-text" id="subtitle-text"></div>
+    </div>
+    <div class="permissions-badge" id="permissions-badge">
+      <div class="perm-item"><span class="perm-dot"></span> presence:show</div>
+      <div class="perm-item" style="opacity:0.5"><span class="perm-dot" style="background:#555;box-shadow:none"></span> camera (未授予)</div>
+      <div class="perm-item" style="opacity:0.5"><span class="perm-dot" style="background:#555;box-shadow:none"></span> microphone (未授予)</div>
+    </div>
+  </main>
+</body>
+</html>

@@ -54,6 +54,34 @@ pub enum Message {
         active_body: Option<String>,
         reason: String,
     },
+    #[serde(rename = "presence.intent")]
+    PresenceIntent {
+        intent_id: String,
+        host_id: String,
+        reason: String,
+        urgency: PresenceUrgency,
+        requested_scopes: Vec<String>,
+        expires_at_ms: u64,
+    },
+    #[serde(rename = "presence.decision")]
+    PresenceDecision {
+        intent_id: String,
+        host_id: String,
+        decision: PresenceDecisionKind,
+    },
+    #[serde(rename = "presence.grant")]
+    PresenceGrant {
+        intent_id: String,
+        host_id: String,
+        scope: String,
+        expires_at_ms: u64,
+    },
+    #[serde(rename = "presence.revoke")]
+    PresenceRevoke {
+        intent_id: String,
+        host_id: String,
+        reason: String,
+    },
     #[serde(rename = "turn.started")]
     TurnStarted { turn: u64 },
     #[serde(rename = "protocol.error")]
@@ -75,9 +103,29 @@ impl Message {
             Self::SpeechStart { .. }
             | Self::Hello { .. }
             | Self::BodyHandoff { .. }
+            | Self::PresenceIntent { .. }
+            | Self::PresenceDecision { .. }
+            | Self::PresenceGrant { .. }
+            | Self::PresenceRevoke { .. }
             | Self::ProtocolError { .. } => None,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum PresenceUrgency {
+    Low,
+    Normal,
+    High,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum PresenceDecisionKind {
+    Notify,
+    Appear,
+    Reject,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -301,6 +349,42 @@ mod tests {
         assert_eq!(json["active_body"], "host-panel-a");
         assert_eq!(json["reason"], "first_body");
         assert_eq!(serde_json::from_value::<Message>(json).unwrap(), message);
+    }
+
+    #[test]
+    fn presence_messages_round_trip_without_turn_state() {
+        let messages = [
+            Message::PresenceIntent {
+                intent_id: "intent-1".into(),
+                host_id: "host-a".into(),
+                reason: "requested by operator".into(),
+                urgency: PresenceUrgency::Normal,
+                requested_scopes: vec!["presence:notify".into(), "presence:show".into()],
+                expires_at_ms: 1200,
+            },
+            Message::PresenceDecision {
+                intent_id: "intent-1".into(),
+                host_id: "host-a".into(),
+                decision: PresenceDecisionKind::Appear,
+            },
+            Message::PresenceGrant {
+                intent_id: "intent-1".into(),
+                host_id: "host-a".into(),
+                scope: "presence:show".into(),
+                expires_at_ms: 1200,
+            },
+            Message::PresenceRevoke {
+                intent_id: "intent-1".into(),
+                host_id: "host-a".into(),
+                reason: "user_revoked".into(),
+            },
+        ];
+        for message in messages {
+            let json = serde_json::to_value(&message).unwrap();
+            assert!(json["type"].as_str().unwrap().starts_with("presence."));
+            assert_eq!(message.turn(), None);
+            assert_eq!(serde_json::from_value::<Message>(json).unwrap(), message);
+        }
     }
 
     #[test]

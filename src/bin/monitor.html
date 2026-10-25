@@ -43,6 +43,7 @@ h1{font-size:clamp(20px,3vw,32px);letter-spacing:2px;margin:0;color:var(--cyan);
 </section>
 <div class="columns">
   <div class="stack">
+    <section class="section"><h2>Robotics World / 只读视觉</h2><div class="rows" id="roboticsWorld"><div class="empty">等待机器人投影...</div></div></section>
     <section class="section"><h2>设备与身体</h2><div class="rows" id="devices"><div class="empty">尚未发现设备</div></div></section>
     <section class="section"><h2>检查与异常</h2><div class="rows" id="checks"><div class="empty">等待数据...</div></div></section>
   </div>
@@ -126,6 +127,20 @@ function renderCortico(x){
   if(c.errors?.length){const item=c.errors[c.errors.length-1];rows.push(row('最近模型错误',item.message||item.error||'unknown','bad'))}
   $('corticoDetail').innerHTML=rows.join('');
 }
+function renderRoboticsWorld(x){
+  const w=x.robotics_world||{};
+  if(!w.configured){$('roboticsWorld').innerHTML='<div class="empty">Hub 未配置 SOLVER_ROBOTICS_WORLD_URL</div>';return}
+  const camera=w.camera_state||'unknown',cameraClass=camera==='streaming'&&w.frame_age_ms!=null&&Number(w.frame_age_ms)<3000?'good':camera==='disconnected'?'bad':'warn';
+  const rows=[
+    row('相机',camera,cameraClass,`${w.frame_age_ms==null?'帧龄 --':`帧龄 ${w.frame_age_ms} ms`} · seq ${w.frame_seq??'--'}`),
+    row('推理 / 丢帧',w.inference_state||'等待模型',w.inference_state==='ready'&&Number(w.inference_fps||0)>=2?'good':'warn',`${w.inference_latency_ms==null?'--':`${w.inference_latency_ms} ms`} · ${w.inference_fps==null?'--':`${w.inference_fps} FPS`} · dropped ${w.dropped_frames??'--'}`),
+    row('检测数量',`${n(w.detection_count)} / 20`,w.detection_count?'info':'warn',`World ${w.ok?'在线':'不可达'} · ${w.latency_ms==null?'--':`${w.latency_ms} ms`}`),
+    row('机器人状态',w.status_available===false?'状态源离线':w.robot_vm_running===true?'VM 运行':'VM 未确认',w.status_available===false?'warn':w.robot_vm_running?'good':'warn',`micro-ROS ${w.micro_ros_session_observed?'在线':w.status_available===false?'未连接':'未确认'} · mapping ${w.mapping_available===false?'未探测':w.mapping_healthy?'健康':'未就绪'} · nav ${w.navigation_available===false?'未探测':w.navigation_ready?'就绪':'未就绪'}`),
+  ];
+  if(w.detections?.length)rows.push(row('当前目标',w.detections.map(d=>`${d.class} ${(Number(d.confidence)*100).toFixed(0)}%`).join(' · '),'violet','归一化边界框 · 结构化结果 · 无图像帧'));
+  if(w.error)rows.push(row('探测状态',w.error,'bad'));
+  $('roboticsWorld').innerHTML=rows.join('');
+}
 function renderRuntime(x){
   const runtime=[
     row('ASR',`${n(x.asr_ok)} ok / ${n(x.asr_errors)} err`,Number(x.asr_errors||0)?'bad':'good',`calls ${n(x.asr_calls)} · last ${x.asr_last_latency_ms==null?'--':`${x.asr_last_latency_ms}ms`}`),
@@ -170,7 +185,7 @@ function render(x){
   text('links',`${n(x.connections)} / ${n(Object.keys(x.devices||{}).length)}`);text('linksSub',`累计连接 ${n(x.total_connections)} · 设备注册 ${n(Object.keys(x.devices||{}).length)} · 活动 ${x.active_body||'未选择'}`);
   text('flow',`${n(x.messages_in)} / ${n(x.messages_out)}`);$('flow').className='value cyan';text('flowSub',`${rate(state.rates.in)} 入/s · ${rate(state.rates.out)} 出/s`);
   text('rateIn',`${rate(state.rates.in)}/s`);text('rateOut',`${rate(state.rates.out)}/s`);text('rateEvents',`${rate(state.rates.events)}/s`);text('rateAudio',`${fbytes(state.rates.audio)}/s`);
-  renderDirections(x);renderDevices(x);renderChecks(x);renderMemory(x);renderCortico(x);renderEvents(x);renderAdapters();renderRuntime(x);
+  renderDirections(x);renderDevices(x);renderChecks(x);renderMemory(x);renderCortico(x);renderRoboticsWorld(x);renderEvents(x);renderAdapters();renderRuntime(x);
   $('source').textContent=`${location.origin}/monitor.json + /adapters`;
 }
 function updateFreshness(){

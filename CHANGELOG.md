@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0
+
+- Added scoped, short-lived Host presence intents with explicit local policy decisions.
+- Added `presence.intent`, `presence.decision`, `presence.grant`, and `presence.revoke` protocol messages.
+- Added `POST /presence/intent` and `POST /presence/revoke` service-authenticated operator APIs.
+- Added a Tauri tray host with notify/appear/reject policy, full-screen overlay, TTL countdown, and immediate revoke.
+- Added a bounded read-only Robotics World projection for camera, YOLO, mapping, navigation, and robot health.
+- Kept WebSocket v1 plus binary PCM16; gRPC was evaluated and not adopted. Unused gRPC build dependencies were removed.
+- Added an HTTP + WebSocket presence smoke test.
+
 ## 0.2.1
 
 - Added optional PCM16 binary media frames over WebSocket.
