@@ -12,6 +12,7 @@
 - Fixed Hub restart recovery: a torn JSONL line no longer blocks startup (`load_trace_lossy` reports skipped records as `trace.recovered`), and `TraceWriter` terminates a torn tail before appending so the next record is not glued to it.
 - Defaulted `SOLVER_TTS_PROMPT_LANG` to `zh` to match the configured voice.
 - Added `tools/protocol-unknown-type-smoke.mjs` and release acceptance evidence under `D:\11\Logs\`.
+- Segmentation hardening: an `interrupt` `render.cue` makes the body skip queued chunks of a superseded turn (the chunk already handed to the device still finishes), the queue is bounded by 32 segments / 8 MiB, and a segmented turn stops at `SOLVER_TTS_TURN_BUDGET_SECONDS`, degrading the remainder to subtitles.
 
 ## 0.3.0
 

@@ -1,7 +1,10 @@
 use std::{
     path::{Path, PathBuf},
     process::Command,
-    sync::mpsc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        mpsc, Arc,
+    },
     time::Duration,
 };
 
@@ -296,11 +299,13 @@ struct SegmentQueue {
     turn: u64,
     next_seq: u64,
     pending: std::collections::BTreeMap<u64, PlayJob>,
+    pending_bytes: usize,
     dropped: u64,
     played: u64,
 }
 
 const QUEUE_DEPTH_LIMIT: usize = 32;
+const QUEUE_BYTE_LIMIT: usize = 8 * 1024 * 1024;
 
 impl SegmentQueue {
     /// Returns the jobs that are now ready to play, in order.
@@ -323,24 +328,36 @@ impl SegmentQueue {
             }
             self.dropped += stale;
             self.pending.clear();
+            self.pending_bytes = 0;
             self.turn = job.turn;
-            self.next_seq = 0;
+            // Start where the stream starts: after an active-body handoff the
+            // first frame of a turn can be seq > 0, and waiting for seq 0 would
+            // stall the rest of the turn forever.
+            self.next_seq = job.seq;
         }
         if job.seq > self.next_seq {
-            if self.pending.len() >= QUEUE_DEPTH_LIMIT {
+            let bytes = job.pcm.len();
+            if self.pending.len() >= QUEUE_DEPTH_LIMIT
+                || self.pending_bytes.saturating_add(bytes) > QUEUE_BYTE_LIMIT
+            {
                 self.dropped += 1;
                 println!(
-                    "queue full ({} segments); dropped turn={} seq={}",
-                    QUEUE_DEPTH_LIMIT, job.turn, job.seq
+                    "queue full ({} segments, {} bytes); dropped turn={} seq={}",
+                    self.pending.len(),
+                    self.pending_bytes,
+                    job.turn,
+                    job.seq
                 );
                 return Vec::new();
             }
+            self.pending_bytes = self.pending_bytes.saturating_add(bytes);
             self.pending.insert(job.seq, job);
             return Vec::new();
         }
         let mut ready = vec![job];
         self.next_seq = self.next_seq.saturating_add(1);
         while let Some(next) = self.pending.remove(&self.next_seq) {
+            self.pending_bytes = self.pending_bytes.saturating_sub(next.pcm.len());
             ready.push(next);
             self.next_seq = self.next_seq.saturating_add(1);
         }
@@ -374,6 +391,8 @@ struct PlayEvent {
     player_ms: u64,
     transport: &'static str,
     error: Option<String>,
+    /// The chunk was queued for a turn that has since been superseded.
+    superseded: bool,
 }
 
 /// Owns the blocking playback thread. The thread creates the audio stream (cpal
@@ -381,12 +400,16 @@ struct PlayEvent {
 struct Player {
     jobs: Option<tokio::sync::mpsc::Sender<PlayJob>>,
     events: tokio::sync::mpsc::Receiver<PlayEvent>,
+    /// Highest turn the body has been told about; older queued chunks are skipped.
+    latest_turn: Arc<AtomicU64>,
 }
 
 impl Player {
     fn start(play: bool) -> Self {
         let (job_tx, mut job_rx) = tokio::sync::mpsc::channel::<PlayJob>(64);
         let (event_tx, event_rx) = tokio::sync::mpsc::channel::<PlayEvent>(64);
+        let latest_turn = Arc::new(AtomicU64::new(0));
+        let thread_turn = latest_turn.clone();
         let spawned = std::thread::Builder::new()
             .name("absolute-solver-speaker".into())
             .spawn(move || {
@@ -404,9 +427,10 @@ impl Player {
                     None
                 };
                 while let Some(job) = job_rx.blocking_recv() {
+                    let superseded = job.turn < thread_turn.load(Ordering::Relaxed);
                     let started = std::time::Instant::now();
                     let pcm_ms = pcm_duration_ms(job.pcm.len(), job.sr);
-                    let error = if !play {
+                    let error = if superseded || !play {
                         None
                     } else if let Some(speaker) = speaker.as_ref() {
                         speaker.play(&job.pcm, job.sr).err()
@@ -416,13 +440,14 @@ impl Player {
                     let event = PlayEvent {
                         turn: job.turn,
                         seq: job.seq,
-                        audible: play && speaker.is_some(),
+                        audible: play && speaker.is_some() && !superseded,
                         mouth: job.mouth,
                         pcm_bytes: job.pcm.len(),
                         pcm_ms,
                         player_ms: started.elapsed().as_millis() as u64,
                         transport: job.transport,
                         error,
+                        superseded,
                     };
                     if event_tx.blocking_send(event).is_err() {
                         break;
@@ -435,12 +460,19 @@ impl Player {
             return Self {
                 jobs: None,
                 events: event_rx,
+                latest_turn,
             };
         }
         Self {
             jobs: Some(job_tx),
             events: event_rx,
+            latest_turn,
         }
+    }
+
+    /// Marks every queued chunk of an older turn as superseded.
+    fn interrupt(&self, turn: u64) {
+        self.latest_turn.fetch_max(turn, Ordering::Relaxed);
     }
 
     async fn submit(&self, jobs: Vec<PlayJob>) {
@@ -660,6 +692,20 @@ where
                             last: _last,
                         } = &message
                         else {
+                            if let Message::RenderCue { turn, kind, .. } = &message {
+                                if kind == "interrupt"
+                                    && turn.is_none_or(|cue_turn| cue_turn >= queue.turn)
+                                {
+                                    let dropped = queue.depth();
+                                    queue.pending.clear();
+                                    queue.pending_bytes = 0;
+                                    queue.dropped += dropped as u64;
+                                    player.interrupt(turn.unwrap_or(queue.turn));
+                                    println!(
+                                        "interrupt cue: dropped {dropped} buffered segment(s); queued chunks are skipped"
+                                    );
+                                }
+                            }
                             trace
                                 .write(trace_event(
                                     "hub->body",
@@ -771,10 +817,16 @@ where
             }
             Some(event) = player.events.recv() => {
                 queue.played += 1;
-                let playback = match (&event.error, event.audible) {
-                    (Some(error), _) => format!("playback failed: {error}"),
-                    (None, true) => format!("played; player_ms={}; pcm_ms={}", event.player_ms, event.pcm_ms),
-                    (None, false) => format!("skipped (no audio output); pcm_ms={}", event.pcm_ms),
+                let playback = match (&event.error, event.audible, event.superseded) {
+                    (Some(error), _, _) => format!("playback failed: {error}"),
+                    (None, _, true) => "skipped (superseded by newer turn)".to_owned(),
+                    (None, true, false) => format!(
+                        "played; player_ms={}; pcm_ms={}",
+                        event.player_ms, event.pcm_ms
+                    ),
+                    (None, false, false) => {
+                        format!("skipped (no audio output); pcm_ms={}", event.pcm_ms)
+                    }
                 };
                 println!(
                     "say turn={} seq={} pcm={} bytes mouth={} transport={} {playback}",
@@ -1058,6 +1110,31 @@ mod tests {
         assert_eq!(queue.depth(), 1);
         assert_eq!(queue.accept(job(4, 0)).len(), 1);
         assert_eq!(queue.depth(), 0);
+        assert_eq!(queue.dropped, 1);
+    }
+
+    #[test]
+    fn queue_starts_mid_turn_after_a_handoff() {
+        let mut queue = super::SegmentQueue::default();
+        let ready = queue.accept(job(7, 3));
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].seq, 3);
+        let next = queue.accept(job(7, 4));
+        assert_eq!(next.len(), 1);
+        assert_eq!(queue.dropped, 0);
+    }
+
+    #[test]
+    fn queue_is_bounded_by_bytes() {
+        let mut queue = super::SegmentQueue::default();
+        assert_eq!(queue.accept(job(9, 0)).len(), 1);
+        let mut big = job(9, 2);
+        big.pcm = vec![0u8; super::QUEUE_BYTE_LIMIT];
+        assert!(queue.accept(big).is_empty());
+        assert_eq!(queue.depth(), 1);
+        let mut overflow = job(9, 3);
+        overflow.pcm = vec![0u8; 1024];
+        assert!(queue.accept(overflow).is_empty());
         assert_eq!(queue.dropped, 1);
     }
 

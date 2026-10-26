@@ -76,6 +76,8 @@ struct SegmentConfig {
     enabled: bool,
     limits: absolute_solver::segments::SegmentLimits,
     concurrency: usize,
+    /// Wall-clock budget for one segmented turn; later segments degrade to subtitles.
+    turn_budget: std::time::Duration,
 }
 
 impl SegmentConfig {
@@ -88,6 +90,9 @@ impl SegmentConfig {
             enabled: env_flag("SOLVER_TTS_SEGMENTED"),
             limits,
             concurrency: env_usize("SOLVER_TTS_SEGMENT_CONCURRENCY", 2).clamp(1, 2),
+            turn_budget: std::time::Duration::from_secs(
+                env_usize("SOLVER_TTS_TURN_BUDGET_SECONDS", 120).clamp(5, 600) as u64,
+            ),
         }
     }
 }
@@ -98,6 +103,7 @@ impl Default for SegmentConfig {
             enabled: false,
             limits: absolute_solver::segments::SegmentLimits::default(),
             concurrency: 2,
+            turn_budget: std::time::Duration::from_secs(120),
         }
     }
 }
@@ -891,6 +897,31 @@ async fn ingest_audio_chunk(
         ));
     }
     Ok(())
+}
+
+/// Tells the active body to drop buffered segments of a superseded turn.
+///
+/// Protocol v1 has no stop message; the cue is the existing `render.cue` frame
+/// with `kind = "interrupt"`, so an old body simply ignores it.
+async fn interrupt_active_body(hub: &Hub, turn: u64) {
+    if hub.active_body.lock().await.is_none() {
+        return;
+    }
+    let cue = Message::RenderCue {
+        turn: Some(turn),
+        kind: "interrupt".into(),
+        text: None,
+        expression: None,
+        motion: None,
+    };
+    hub.record(
+        "hub->body",
+        &cue,
+        Some(turn),
+        "interrupt; drop buffered segments of older turns",
+    )
+    .await;
+    let _ = hub.outbound.send(cue);
 }
 
 async fn notify_body_handoff(hub: &Hub, active_body: Option<String>, reason: &str) {
@@ -2166,6 +2197,7 @@ async fn process_persona_expression(
     }
     // === END PRESENCE METADATA HANDLING ===
 
+    interrupt_active_body(&hub, turn).await;
     if hub.segments.enabled && run_segmented_turn(&hub, turn, &answer).await {
         return;
     }
@@ -2481,6 +2513,7 @@ async fn handle_socket(socket: WebSocket, hub: Arc<Hub>) {
                     .lock()
                     .await
                     .retain(|pending_turn, _| *pending_turn >= turn);
+                interrupt_active_body(&hub, turn).await;
                 hub.record(
                     "body->hub",
                     &message,
@@ -2909,6 +2942,7 @@ async fn process_turn(hub: Arc<Hub>, turn: u64, pending: PendingAudio) {
         }
     }
 
+    interrupt_active_body(&hub, turn).await;
     if hub.segments.enabled && run_segmented_turn(&hub, turn, &answer).await {
         return;
     }
@@ -3188,9 +3222,14 @@ async fn run_segmented_turn(hub: &Arc<Hub>, turn: u64, answer: &str) -> bool {
             Result<(Vec<u8>, u32), String>,
         ),
     > = BTreeMap::new();
+    let segment_texts: Vec<String> = segments
+        .iter()
+        .map(|segment| segment.text.clone())
+        .collect();
     let mut next_to_send = 0usize;
     let mut sent_pcm_ms = 0u64;
     let mut first_say_recorded = false;
+    let mut sent_segments = 0usize;
     let mut pending = futures_util::stream::iter(segments.into_iter().map(|segment| {
         let adapters = hub.adapters.clone();
         async move {
@@ -3212,7 +3251,42 @@ async fn run_segmented_turn(hub: &Arc<Hub>, turn: u64, answer: &str) -> bool {
     }))
     .buffer_unordered(config.concurrency);
 
-    while let Some((segment, latency_ms, outcome)) = pending.next().await {
+    'emit: while let Some((segment, latency_ms, outcome)) = pending.next().await {
+        if started.elapsed() >= config.turn_budget {
+            hub.record_system_for_turn(
+                "tts.turn.budget_exceeded",
+                format!(
+                    "turn={turn}; elapsed={}ms; budget={}ms; degraded_from_seq={next_to_send}",
+                    started.elapsed().as_millis(),
+                    config.turn_budget.as_millis()
+                ),
+                Some(turn),
+            )
+            .await;
+            {
+                let mut monitor = hub.monitor.lock().await;
+                monitor.segments_dropped += (total - next_to_send) as u64;
+            }
+            for index in next_to_send..total {
+                let cue = Message::RenderCue {
+                    turn: Some(turn),
+                    kind: "subtitle".into(),
+                    text: segment_texts.get(index).cloned(),
+                    expression: None,
+                    motion: None,
+                };
+                hub.record(
+                    "hub->stage",
+                    &cue,
+                    Some(turn),
+                    format!("segment {} degraded by turn budget", index + 1),
+                )
+                .await;
+                let _ = hub.outbound.send(cue);
+            }
+            next_to_send = total;
+            break 'emit;
+        }
         {
             let mut monitor = hub.monitor.lock().await;
             monitor.tts_last_latency_ms = Some(latency_ms);
@@ -3301,6 +3375,7 @@ async fn run_segmented_turn(hub: &Arc<Hub>, turn: u64, answer: &str) -> bool {
                         }
                     }
                     first_say_recorded = true;
+                    sent_segments += 1;
                     sent_pcm_ms += pcm_duration_ms(pcm_bytes, sample_rate.max(1));
                 }
                 Err(error) => {
@@ -3366,7 +3441,7 @@ async fn run_segmented_turn(hub: &Arc<Hub>, turn: u64, answer: &str) -> bool {
     hub.record_system_for_turn(
         "tts.segment.done",
         format!(
-            "turn={turn}; sent={next_to_send}/{total}; first_say={}ms; audio={sent_pcm_ms}ms",
+            "turn={turn}; audio_segments={sent_segments}/{total}; first_say={}ms; audio={sent_pcm_ms}ms",
             started.elapsed().as_millis()
         ),
         Some(turn),
@@ -4029,6 +4104,7 @@ mod tests {
                 enabled: true,
                 limits: absolute_solver::segments::SegmentLimits::default(),
                 concurrency: 2,
+                turn_budget: std::time::Duration::from_secs(120),
             },
         )
         .await;
@@ -4094,6 +4170,7 @@ mod tests {
                 enabled: true,
                 limits: absolute_solver::segments::SegmentLimits::default(),
                 concurrency: 1,
+                turn_budget: std::time::Duration::from_secs(120),
             },
         )
         .await;

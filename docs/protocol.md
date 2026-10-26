@@ -237,6 +237,14 @@ All integer fields use little-endian encoding.
 
 `render.cue` does not create a new Hub model turn. It is delivered only to the active body in v1.
 
+Current `kind` values:
+
+- `cue`, `subtitle`, `danmaku` — presentation only.
+- `subtitle` is also sent for a segment whose synthesis failed, so the text is not lost.
+- `interrupt` — the Hub superseded the current turn: the body must drop buffered
+  segments of older turns and stop after the chunk already handed to the device.
+  Protocol v1 has no dedicated stop message, so the cue carries this intent.
+
 ## Active Body And Handoff
 
 The Hub maintains one active output body.
