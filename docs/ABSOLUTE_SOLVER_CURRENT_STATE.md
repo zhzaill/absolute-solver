@@ -1,6 +1,6 @@
 # Absolute Solver 当前可信项目现状
 
-更新时间：2026-10-26（Asia/Shanghai）  
+更新时间：2026-10-26（Asia/Shanghai）
 适用范围：仅 Absolute Solver 仓库、Hub/Body/Provider 运行链路及其验收证据。本文是日期快照，不代替源代码、实际运行结果和 `D:\11\Logs` 原始报告。
 
 ## 证据规则
