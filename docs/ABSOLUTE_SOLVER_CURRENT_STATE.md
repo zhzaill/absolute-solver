@@ -1,98 +1,71 @@
 # Absolute Solver 当前可信项目现状
 
-更新时间：2026-10-26（Asia/Shanghai）
-适用范围：仅 Absolute Solver 仓库、其 Hub/Body/Provider 运行链路与相关验收证据。
-状态类型：当前快照，不是历史计划，也不替代运行 Logs。
+更新时间：2026-10-26（Asia/Shanghai）  
+适用范围：仅 Absolute Solver 仓库、Hub/Body/Provider 运行链路及其验收证据。本文是日期快照，不代替源代码、实际运行结果和 `D:\11\Logs` 原始报告。
 
 ## 证据规则
 
-这份手册是索引，不是第二个事实源。事实优先级固定为：
+当前代码、测试输出和实际运行记录优先；`D:\11\Logs` 保存验收证据；本文件只做摘要与索引。计划文档和状态措辞本身不能把功能改成 `accepted`。新证据应追加到日志并更新本手册，不覆盖历史结论。
 
-1. 当前代码、测试输出和实际运行命令；
-2. `D:\11\Logs` 下带日期的运行报告、trace、monitor 快照和部署校验；
-3. 本文件和其他 `docs` 只做带证据路径的摘要。
+## 系统与安全边界
 
-## 系统视角
+Absolute Solver 是跨主机实时协作系统：Hub 编排回合、Body 路由和 Provider 调用；Body 连接真实设备并执行音频采集/播放；ASR、LLM、TTS 可独立部署。Hub 是逻辑协调点，但当前没有中心身份认证，局域网 WebSocket/HTTP 链路未加密。Presence token 只用于受限的 Presence 流程，不是 Hub 全局认证。
 
-Absolute Solver 是跨主机运行的实时协作系统：Hub 编排回合和 Provider 调用，Body 连接真实设备并执行音频采集与播放，ASR/LLM/TTS Provider 可独立部署在其他主机。Hub 是逻辑协调点，但当前没有中心身份认证；WebSocket 局域网链路也未加密。因此 Presence token 不能被误读为 Hub 全局认证，部署边界和凭据轮换属于系统能力的一部分，而非外围运维细节。
+部署仅适用于可信局域网，不应直接暴露公网。历史日志曾出现 Presence token 和服务器密码，现已脱敏；凭据是否已轮换尚未核实。
 
-计划书不能单独改变状态。历史报告不被覆盖；后续结果用追加勘误关闭旧边界。
+## 仓库快照
 
-## 当前仓库
-
-- GitHub：`https://github.com/zhzaill/absolute-solver`
-- 分支：`main`
-- 同步状态：本地 `main` 与 `origin/main` 一致；工作区干净。
-- 当前代码版本：Cargo `0.3.0`。
-- 已提交主线：Native TTS/restart recovery、segmented TTS、interruptible bounded playback、有界 Windows 麦克风采集、协议/状态索引纠偏和当前状态手册。
-- GitHub 尚无 `v0.3.0` tag/Release；自动化测试通过，但发布验收项尚未齐备，见下方未完成事项。
+- 仓库：`https://github.com/zhzaill/absolute-solver`，分支 `main`。
+- 应用版本：Cargo `0.3.0`；GitHub 尚无 `v0.3.0` tag/Release。
+- 最近已提交的本地代码包含 ASR 设备选择、麦克风诊断工具和录音台；该提交尚未推送到 `origin/main`。
+- 本次快照中工作区另有 `docs/PROJECT_EXECUTION_METHOD.md` 与 `docs/tasks/2026-10-26-asr-input.md` 的未提交修改。不要把工作区描述为干净。
+- 自动化验证已通过：`cargo fmt --check`；39 个库测试、11 个 Body 测试、20 个 Hub 测试；协议 schema 生成检查曾在缺少生成文件时失败，随后补交 schema 后通过。
 
 ## 运行快照
 
-### Hub
+最近一次服务器状态记录：Hub `LAN_HUB_ADDRESS:18100`、版本 `0.3.0`、turn 46、idle、无 active Body；ASR/LLM/TTS 健康检查此前均通过。服务器在 2026-10-26 23:00 左右休眠，WoL 未唤醒，因此这些是休眠前快照，不应当作当前在线保证。现场开机或在 BIOS/NIC 启用 PCIe 网络唤醒后再复查。
 
-- 地址：`LAN_HUB_ADDRESS:18100`，生产地址以此为准。
-- 版本：`0.3.0`；状态 `idle`；当前 turn `46`。
-- 当前连接数：`0`；active Body：无。
-- 当前 monitor 计数是进程快照，不代表历史累计验收：`tts_ok=3`、`say_sent=3`、`say_undelivered=0`；ASR/LLM 当前进程计数为 0。
-- 证据：当前 `GET /monitor.json`；历史真实验收见 `D:\11\Logs\2026-10-26-Absolute-Solver-TTS正式验收.md` 与 `D:\11\Logs\2026-10-26-asr-input-turn.md`。
-
-### Provider
-
-服务器现有计划任务和健康检查均通过：
-
-| Provider | 地址 | 当前结果 | 证据 |
+| Provider | 地址 | 最近证据 | 状态 |
 |---|---|---|---|
-| ASR | `127.0.0.1:9881` | HTTP 200；Qwen3-ASR `cuda`；源 WAV 转写逐字正确；实麦通路受设备电平限制 | `D:\11\Logs\2026-10-26-ASR实麦诊断与录音台.md`、服务器 `E:\modelsvc\asr_server.log` |
-| LLM | `127.0.0.1:18081` | `/v1/models` HTTP 200；Qwen3-0.6B-Q8_0 | 当前远程健康检查、turn 28-31 trace |
-| TTS | `127.0.0.1:18080` | `/healthz` HTTP 200；upstream alive | `D:\11\Logs\2026-10-26-Absolute-Solver-TTS正式验收.md`、当前远程健康检查 |
+| ASR | `127.0.0.1:9881` | HTTP 200；Qwen3-ASR CUDA；源 WAV 转写逐字正确 | Provider/WAV 路径 verified |
+| LLM | `127.0.0.1:18081` | `/v1/models` HTTP 200；Qwen3-0.6B-Q8_0 | 最近健康检查通过 |
+| TTS | `127.0.0.1:18080` | `/healthz` HTTP 200；upstream alive | 正式 TTS 验收通过 |
 
-### Body
+## 能力状态
 
-- Native Audio Body 的完整 WAV/PCM16/active handoff/故障恢复已通过正式验收。
-- `src/bin/body.rs` 现在支持显式 `SOLVER_CAPTURE_SECONDS` 的一次性采集（限制 1-30 秒、内存中分片发送、默认关闭），并可用 `SOLVER_CAPTURE_DEVICE` 指定 `default` 或设备序号；采集完成后会打印设备名与峰值，峰值低于 -45 dBFS 时明确告警。
-- 两次真实采集（turn 30/31）都完成 ASR → LLM → TTS → Body 播放，但 ASR 只返回“嗯”。根因已在 2026-10-26 夜间定位到设备侧：默认输入（耳机 Lenovo EH150P，16 kHz 单声道）电平过低、静音段占多数；内置 Realtek 阵列与两路虚拟麦在驱动层送全 0。已知文本的声学回环证明 ASR Provider 与 Hub 链路无责。
-- ASR 实麦项按操作者判定记为 `accepted`（不阻塞发布）；人工朗读逐字一致的补证排在 2026-10-27。诊断工具：`absolute-solver-mic-probe`（设备与电平）、`absolute-solver-mic-monitor` + `录音键.cmd`（实时波形/频谱/录音键/设备切换）。
-- 当前没有后台麦克风采集，也没有 active Body。
-
-## 已验收能力
-
-| 能力 | 当前状态 | 证据 |
+| 能力 | 状态 | 证据 |
 |---|---|---|
-| WebSocket v1 + ASV1 二进制媒体 | accepted | `docs/protocol.md`、`src/wire.rs`、协议测试 |
-| 未知 `type` 非致命兼容 | accepted | `D:\11\Logs\2026-10-26-protocol-unknown-type.md` |
-| Native TTS 正式输出 | accepted | `D:\11\Logs\2026-10-26-Absolute-Solver-TTS正式验收.md` |
-| 分段 TTS/首段先播/打断/handoff | accepted | `D:\11\Logs\2026-10-26-tts-segmented.md` |
-| 120 秒分段整轮预算 | accepted | `D:\11\Logs\2026-10-26-tts-turn-budget.md` |
-| Trace 撕裂行恢复 | accepted | TTS 正式验收报告 §1.3、`src/lib.rs` 测试 |
-| ASR Provider 健康和 WAV 回放回合 | verified | `D:\11\Logs\2026-10-26-asr-input-turn.md` |
-| ASR 实麦输入通路（含设备选择） | accepted（操作者判定 2026-10-26） | `D:\11\Logs\2026-10-26-ASR实麦诊断与录音台.md` |
+| WebSocket v1、ASV1 PCM16、未知 type 非致命兼容 | accepted | `docs/protocol.md`、`src/wire.rs`、schema 与协议测试；`D:\11\Logs\2026-10-26-protocol-unknown-type.md` |
+| Native TTS、分段首段先播、打断、active handoff | accepted | `D:\11\Logs\2026-10-26-Absolute-Solver-TTS正式验收.md`、`D:\11\Logs\2026-10-26-tts-segmented.md` |
+| 120 秒整轮 TTS 预算 | accepted | `D:\11\Logs\2026-10-26-tts-turn-budget.md` |
+| Trace 撕裂行恢复 | accepted | TTS 正式验收报告 §1.3、Rust 测试 |
+| ASR Provider 与 WAV 回放 | verified | `D:\11\Logs\2026-10-26-asr-input-turn.md` |
+| ASR 实麦通路 | accepted（操作者判定，2026-10-26 23:15） | `D:\11\Logs\2026-10-26-ASR实麦诊断与录音台.md` |
 
-## 未完成和真实边界
+ASR 诊断结论：此前两次 Hub 实麦回合仅转写为“嗯”。本地默认耳机麦 Lenovo EH150P 为 16 kHz 单声道，但电平低且静音段占多数；内置 Realtek 阵列和两路虚拟麦在驱动层送全 0。声学回环中源 WAV 被逐字正确识别，同一音频的麦克风采集版本识别错误，故障定位到输入设备侧而非 ASR Provider/Hub。操作者将实麦通路判定为 `accepted`；人工朗读逐字一致属于后续补证，不阻塞发布判定。设备选择、实时波形/频谱和录音台工具已实现，见 `absolute-solver-mic-probe`、`absolute-solver-mic-monitor`、`录音键.cmd`。
 
-- ASR 实麦识别质量：已由操作者判定收口为 `accepted`。根因是设备属性而非系统缺陷——默认耳机麦电平过低、静音段为主，内置阵列与虚拟麦送全 0；已知文本回环证明 Provider 与 Hub 链路正确。人工朗读逐字一致的补证排在 2026-10-27，不阻塞。
-- Body 侧分段播放/丢弃计数尚未上报 Hub monitor；任务卡 `docs/tasks/2026-10-26-tts-segment-receipts.md`。
-- Provider 侧流式 PCM 尚未开始；任务卡 `docs/tasks/2026-10-26-tts-streaming-pcm.md`。
-- Presence 覆盖层提前撤销仍待生命周期审计。
-- Hub 当前无鉴权、局域网明文监听；凭据轮换任务 `docs/tasks/2026-10-26-credential-rotation.md` 已建立但未执行。
-- 机器人 Nav2/physical motion 尚未验收；发布 tag/release、构建产物与回滚核验、trace 归档映射仍未收束。
+## 功能后续
 
-## 历史连续性和命名
+这些项目是后续工作，不要与 Release 门槛混称为“唯一主任务”：
 
-- 2026-10-23 Presence 报告记录 turn 41；2026-10-26 TTS 重启恢复记录 turn 18。两者之间存在 trace 替换或归档断点，不能拼成连续生产序列。
-- 运行版本是 0.3.0，但服务器历史二进制、trace 和备份路径带 `v0.2.1` 文件名。回滚必须核对二进制版本和 SHA256，不能凭文件名判断。
-- `LAN_HUB_ADDRESS` 只属于预算验收时不可达的历史测试地址；当前生产地址为 `LAN_HUB_ADDRESS`。
-
-## 下一项功能主任务
-
-1. 2026-10-27 用 `录音键.cmd` 在可用设备上录一句 6 秒，确认 transcript 与口述逐字一致（补证，不阻塞）。
-2. 排查内置 Realtek 麦克风阵列送全 0：麦克风静音热键、Windows 输入电平、Realtek/Nahimic 设置，目标是让本机拥有第二路可用输入。
-3. 服务器远程开机：WoL 魔术包未唤醒，需在 BIOS/NIC 打开 PCIe 网络唤醒。
+- 用 `录音键.cmd` 在可用设备上录制约 6 秒人工短句，逐字核对转写，作为 ASR 补证；当前不阻塞发布。
+- 排查 Realtek 麦克风阵列送全 0（静音热键、Windows 输入电平、Realtek/Nahimic 驱动设置），或接入另一支可用麦克风。
+- 恢复服务器远程开机：现场检查 BIOS/NIC 的 PCIe Wake-on-LAN 设置。
+- Body 分段播放/丢弃回执尚未上报 Hub monitor；Provider 侧流式 PCM 尚未开始。
+- Presence 覆盖层提前撤销仍待生命周期审计；机器人 Nav2/实体运动未验收。
 
 ## Release 阻塞项
 
-以下事项与 ASR 功能任务并行存在，是创建 `v0.3.0` Release 前的独立证据门槛：
+ASR 实麦已按操作者判定通过，不是当前 Release 阻塞项。创建 `v0.3.0` tag/Release 前仍需：
 
-- 凭据轮换：历史日志已脱敏，但旧 Presence token 和服务器密码是否失效尚未核验；Hub 仍无中心认证，局域网链路未加密。
-- 构建与回滚：生成待发布构建，记录版本和 SHA256，并验证回滚文件；历史文件名含 `v0.2.1`，实际代码为 `0.3.0`，不能按文件名回滚。
-- Trace 连续性：确认 turn 41 到 turn 18 是 trace 归档还是替换，并留下旧、新 trace 的对应关系。
+1. 轮换历史日志中出现过的 Presence token 与服务器账户凭据，验证旧凭据失效，并记录 Hub 实际网络访问边界；Hub 当前无中心认证且链路未加密。
+2. 生成待发布构建并记录版本/SHA256，核验部署与回滚文件。历史文件名带 `v0.2.1`，运行代码为 `0.3.0`，不能仅凭文件名回滚。
+3. 查明生产 turn 41 到 turn 18 之间是 trace 归档还是替换，建立新旧 trace 对应关系。
+
+测试通过不等于发布证据齐全。无上述记录前，不创建 `v0.3.0` Release。
+
+## 历史事实纠偏
+
+- 线上协议是 WebSocket v1 + 二进制媒体；`docs/WIRE_PROTOCOL_V2.md` 是未采纳设计稿，以 `docs/protocol.md`、`src/wire.rs` 和生成 schema 为准。
+- 生产地址以 `LAN_HUB_ADDRESS` 为准；`LAN_HUB_ADDRESS` 是历史不可达测试地址。
+- 2026-10-23 turn 41 与 2026-10-26 turn 18 不能拼成连续生产序列，断点尚待 Release 阻塞项核实。
