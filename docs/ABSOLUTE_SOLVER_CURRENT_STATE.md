@@ -22,10 +22,10 @@ Absolute Solver 是跨主机运行的实时协作系统：Hub 编排回合和 Pr
 
 - GitHub：`https://github.com/zhzaill/absolute-solver`
 - 分支：`main`
-- 本地相对 `origin/main`：领先 3 个已提交 commit，尚有本轮待提交的代码、文档和任务卡改动。
+- 同步状态：本地 `main` 与 `origin/main` 一致，当前提交 `3e695c2`；工作区干净。
 - 当前代码版本：Cargo `0.3.0`。
-- 已提交主线：Native TTS/restart recovery、segmented TTS、interruptible bounded playback。
-- 本轮新增未提交范围：有界 Windows 麦克风采集（`cpal`）、协议/状态索引纠偏、ASR 和凭据任务卡、当前状态手册。
+- 已提交主线：Native TTS/restart recovery、segmented TTS、interruptible bounded playback、有界 Windows 麦克风采集、协议/状态索引纠偏和当前状态手册。
+- GitHub 尚无 `v0.3.0` tag/Release；自动化测试通过，但发布验收项尚未齐备，见下方未完成事项。
 
 ## 运行快照
 
@@ -73,7 +73,7 @@ Absolute Solver 是跨主机运行的实时协作系统：Hub 编排回合和 Pr
 - Provider 侧流式 PCM 尚未开始；任务卡 `docs/tasks/2026-10-26-tts-streaming-pcm.md`。
 - Presence 覆盖层提前撤销仍待生命周期审计。
 - Hub 当前无鉴权、局域网明文监听；凭据轮换任务 `docs/tasks/2026-10-26-credential-rotation.md` 已建立但未执行。
-- 机器人 Nav2/physical motion、发布 tag/release、trace 归档映射仍未收束。
+- 机器人 Nav2/physical motion 尚未验收；发布 tag/release、构建产物与回滚核验、trace 归档映射仍未收束。
 
 ## 历史连续性和命名
 
