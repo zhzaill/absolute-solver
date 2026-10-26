@@ -77,7 +77,7 @@ impl Default for AdapterConfig {
             tts_model: env::var("SOLVER_TTS_MODEL").unwrap_or_else(|_| "tts-1".into()),
             tts_voice: env::var("SOLVER_TTS_VOICE").unwrap_or_else(|_| "xxx_trained".into()),
             tts_text_lang: env::var("SOLVER_TTS_TEXT_LANG").unwrap_or_else(|_| "zh".into()),
-            tts_prompt_lang: env::var("SOLVER_TTS_PROMPT_LANG").unwrap_or_else(|_| "en".into()),
+            tts_prompt_lang: env::var("SOLVER_TTS_PROMPT_LANG").unwrap_or_else(|_| "zh".into()),
             tts_timeout_seconds: env::var("SOLVER_TTS_TIMEOUT_SECONDS")
                 .ok()
                 .and_then(|value| value.parse().ok())

@@ -242,17 +242,69 @@ pub enum WireDecodeError {
     Json(#[from] serde_json::Error),
     #[error("unsupported protocol version {actual}; supported version is {supported}")]
     UnsupportedVersion { actual: u16, supported: u16 },
+    #[error("unsupported message type {kind}")]
+    UnknownType { kind: String },
+}
+
+/// Wire names of every message type defined by protocol v1.
+pub const MESSAGE_TYPES: [&str; 13] = [
+    "hello",
+    "audio.up",
+    "say",
+    "speech.start",
+    "speech.end",
+    "render.cue",
+    "body.handoff",
+    "presence.intent",
+    "presence.decision",
+    "presence.grant",
+    "presence.revoke",
+    "turn.started",
+    "protocol.error",
+];
+
+pub fn is_known_message_type(kind: &str) -> bool {
+    MESSAGE_TYPES.contains(&kind)
+}
+
+/// Decodes one JSON wire frame in either direction.
+///
+/// Protocol v1 requires peers to treat unknown message types as forward-compatible
+/// extensions, so an unknown `type` is reported as its own error instead of being
+/// folded into a JSON syntax failure. Callers decide whether to ignore the frame.
+pub fn decode_wire_message(text: &str) -> Result<Message, WireDecodeError> {
+    let value: serde_json::Value = serde_json::from_str(text)?;
+    match serde_json::from_value::<WireEnvelope>(value.clone()) {
+        Ok(envelope) => {
+            if envelope.v != PROTOCOL_VERSION {
+                return Err(WireDecodeError::UnsupportedVersion {
+                    actual: envelope.v,
+                    supported: PROTOCOL_VERSION,
+                });
+            }
+            Ok(envelope.message)
+        }
+        Err(error) => {
+            if let Some(actual) = value.get("v").and_then(serde_json::Value::as_u64) {
+                if actual != u64::from(PROTOCOL_VERSION) {
+                    return Err(WireDecodeError::UnsupportedVersion {
+                        actual: actual.min(u64::from(u16::MAX)) as u16,
+                        supported: PROTOCOL_VERSION,
+                    });
+                }
+            }
+            match value.get("type").and_then(serde_json::Value::as_str) {
+                Some(kind) if !is_known_message_type(kind) => Err(WireDecodeError::UnknownType {
+                    kind: kind.chars().take(64).collect(),
+                }),
+                _ => Err(WireDecodeError::Json(error)),
+            }
+        }
+    }
 }
 
 pub fn decode_client_message(text: &str) -> Result<Message, WireDecodeError> {
-    let envelope: WireEnvelope = serde_json::from_str(text)?;
-    if envelope.v != PROTOCOL_VERSION {
-        return Err(WireDecodeError::UnsupportedVersion {
-            actual: envelope.v,
-            supported: PROTOCOL_VERSION,
-        });
-    }
-    Ok(envelope.message)
+    decode_wire_message(text)
 }
 
 fn default_protocol_version() -> u16 {
@@ -411,6 +463,40 @@ mod tests {
         let error =
             decode_client_message(r#"{"v":2,"type":"speech.start","at_ms":9}"#).unwrap_err();
         assert!(error.to_string().contains("unsupported protocol version 2"));
+    }
+
+    #[test]
+    fn unknown_message_types_are_reported_separately_from_invalid_json() {
+        let error = decode_wire_message(r#"{"v":1,"type":"body.telemetry","payload":{"rpm":12}}"#)
+            .unwrap_err();
+        assert!(matches!(
+            &error,
+            WireDecodeError::UnknownType { kind } if kind == "body.telemetry"
+        ));
+        assert!(!matches!(error, WireDecodeError::Json(_)));
+
+        let invalid = decode_wire_message(r#"{"v":1,"type":"say"}"#).unwrap_err();
+        assert!(matches!(invalid, WireDecodeError::Json(_)));
+
+        let missing = decode_wire_message(r#"{"v":1,"turn":3}"#).unwrap_err();
+        assert!(matches!(missing, WireDecodeError::Json(_)));
+    }
+
+    #[test]
+    fn unknown_type_never_masks_an_unsupported_version() {
+        let error = decode_wire_message(r#"{"v":2,"type":"body.telemetry","rpm":12}"#).unwrap_err();
+        assert!(matches!(
+            error,
+            WireDecodeError::UnsupportedVersion { actual: 2, .. }
+        ));
+    }
+
+    #[test]
+    fn every_known_message_type_is_accepted_by_the_lenient_path() {
+        for kind in MESSAGE_TYPES {
+            assert!(is_known_message_type(kind));
+        }
+        assert!(!is_known_message_type("body.telemetry"));
     }
 
     #[test]

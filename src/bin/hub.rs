@@ -164,6 +164,9 @@ struct Monitor {
     tts_errors: u64,
     tts_last_latency_ms: Option<u64>,
     tts_output_bytes: u64,
+    say_sent: u64,
+    say_undelivered: u64,
+    last_say: Option<SayDelivery>,
     last_activity_ms: Option<u64>,
     last_error: Option<String>,
     devices: BTreeMap<String, DeviceMonitor>,
@@ -176,6 +179,20 @@ struct DeviceMonitor {
     last_seen_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     caps: Option<serde_json::Value>,
+}
+
+/// Latest `say` delivery attempt. Audio payload is never retained, only its size.
+#[derive(Debug, Clone, Serialize)]
+struct SayDelivery {
+    turn: u64,
+    pcm_bytes: u64,
+    sample_rate: u32,
+    delivered: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    active_body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'static str>,
+    at_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -383,6 +400,9 @@ impl Default for Monitor {
             tts_errors: 0,
             tts_last_latency_ms: None,
             tts_output_bytes: 0,
+            say_sent: 0,
+            say_undelivered: 0,
+            last_say: None,
             last_activity_ms: None,
             last_error: None,
             devices: BTreeMap::new(),
@@ -862,7 +882,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let memory_path = std::env::var("SOLVER_MEMORY_DB")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("data/absolute-solver-memory.sqlite3"));
-    let events = absolute_solver::load_trace(&trace_path).await?;
+    let trace_load = absolute_solver::load_trace_lossy(&trace_path).await?;
+    let events = trace_load.events;
     let last_turn = events
         .iter()
         .filter_map(|event| event.turn)
@@ -943,6 +964,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(cortico_monitor_loop(hub.clone()));
     tokio::spawn(robotics_world_loop(hub.clone()));
     tokio::spawn(presence_expiry_loop(hub.clone()));
+    if trace_load.skipped > 0 {
+        hub.record_system(
+            "trace.recovered",
+            format!(
+                "skipped {} malformed trace line(s) while restoring; {}",
+                trace_load.skipped,
+                trace_load.skipped_examples.join("; ")
+            ),
+        )
+        .await;
+    }
     let app = Router::new()
         .route("/ws", any(ws))
         .route("/state", get(state))
@@ -2285,11 +2317,12 @@ async fn handle_socket(socket: WebSocket, hub: Arc<Hub>) {
         let message = match decode_client_message(&text) {
             Ok(message) => message,
             Err(error) => {
-                let (code, fatal) = match &error {
-                    WireDecodeError::Json(_) => ("invalid_message", false),
-                    WireDecodeError::UnsupportedVersion { .. } => ("unsupported_version", true),
-                };
+                let (code, fatal) = protocol_error_for(&error);
                 eprintln!("invalid message from body: {error}");
+                let note = match &error {
+                    WireDecodeError::UnknownType { .. } => "unknown message type ignored",
+                    _ => "protocol decode failed",
+                };
                 send_direct_message(
                     &hub,
                     &direct_tx,
@@ -2298,7 +2331,7 @@ async fn handle_socket(socket: WebSocket, hub: Arc<Hub>) {
                         message: error.to_string(),
                         fatal,
                     },
-                    "protocol decode failed",
+                    note,
                 )
                 .await;
                 if fatal {
@@ -2516,6 +2549,18 @@ async fn handle_socket(socket: WebSocket, hub: Arc<Hub>) {
         ),
     )
     .await;
+}
+
+/// Maps a wire decode failure to the `protocol.error` code and its fatality.
+///
+/// Unknown message types are forward-compatible extensions, so they never close
+/// the connection; only an unsupported major version is fatal.
+fn protocol_error_for(error: &WireDecodeError) -> (&'static str, bool) {
+    match error {
+        WireDecodeError::Json(_) => ("invalid_message", false),
+        WireDecodeError::UnsupportedVersion { .. } => ("unsupported_version", true),
+        WireDecodeError::UnknownType { .. } => ("unknown_type", false),
+    }
 }
 
 fn is_normal_disconnect(message: &str) -> bool {
@@ -2948,6 +2993,39 @@ async fn send_turn_reply(
     let note = note.into();
     hub.record_system_for_turn("turn.pipeline", format!("turn={turn}; {note}"), Some(turn))
         .await;
+    let active_body = hub.active_body.lock().await.clone();
+    {
+        let mut monitor = hub.monitor.lock().await;
+        if active_body.is_some() {
+            monitor.say_sent += 1;
+        } else {
+            monitor.say_undelivered += 1;
+        }
+        monitor.last_say = Some(SayDelivery {
+            turn,
+            pcm_bytes: output_bytes as u64,
+            sample_rate: sample_rate.max(1),
+            delivered: active_body.is_some(),
+            active_body: active_body.clone(),
+            reason: if active_body.is_some() {
+                None
+            } else {
+                Some("no active audio body")
+            },
+            at_ms: wall_ms(),
+        });
+    }
+    if active_body.is_none() {
+        hub.record_system_for_turn(
+            "tts.no_playback_receiver",
+            format!(
+                "turn={turn}; synthesized={output_bytes} bytes at {} Hz; no active audio body",
+                sample_rate.max(1)
+            ),
+            Some(turn),
+        )
+        .await;
+    }
     hub.record(
         "hub->body",
         &response,
@@ -3003,6 +3081,19 @@ mod tests {
     };
     use serde_json::{json, Value};
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn unknown_message_types_stay_non_fatal_for_body_connections() {
+        let unknown = WireDecodeError::UnknownType {
+            kind: "body.telemetry".into(),
+        };
+        assert_eq!(protocol_error_for(&unknown), ("unknown_type", false));
+        let invalid = decode_client_message(r#"{"v":1,"type":"say"}"#).unwrap_err();
+        assert_eq!(protocol_error_for(&invalid), ("invalid_message", false));
+        let version =
+            decode_client_message(r#"{"v":2,"type":"speech.start","at_ms":1}"#).unwrap_err();
+        assert_eq!(protocol_error_for(&version), ("unsupported_version", true));
+    }
 
     #[test]
     fn monitor_counts_audio_without_retaining_payload() {
@@ -3590,6 +3681,81 @@ mod tests {
         drop(receiver);
         drop(hub);
         server.abort();
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        tokio::fs::remove_file(trace_path).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn say_without_an_active_body_is_reported_as_undelivered() {
+        let (hub, trace_path) =
+            test_hub(test_adapters(String::new(), String::new(), String::new())).await;
+        hub.state.lock().await.turn = 3;
+        send_turn_reply(
+            hub.clone(),
+            3,
+            "只有字幕".into(),
+            vec![1, 0, 2, 0],
+            32_000,
+            true,
+            "test",
+        )
+        .await;
+        let monitor = hub.monitor.lock().await.clone();
+        assert_eq!(monitor.say_undelivered, 1);
+        assert_eq!(monitor.say_sent, 0);
+        let last = monitor.last_say.as_ref().expect("say delivery is recorded");
+        assert!(!last.delivered);
+        assert_eq!(last.turn, 3);
+        assert_eq!(last.pcm_bytes, 4);
+        assert_eq!(last.sample_rate, 32_000);
+        assert_eq!(last.active_body, None);
+        assert_eq!(last.reason, Some("no active audio body"));
+        let snapshot = serde_json::to_string(&monitor).unwrap();
+        assert!(!snapshot.contains("pcm_b64"));
+        assert!(!snapshot.contains("AQACAA"));
+        let events = hub.events.lock().await.clone();
+        assert!(events
+            .iter()
+            .any(|event| event.kind == "tts.no_playback_receiver" && event.turn == Some(3)));
+        let trace = tokio::fs::read_to_string(&trace_path).await.unwrap();
+        assert!(trace.contains("tts.no_playback_receiver"));
+        drop(events);
+        drop(monitor);
+        drop(hub);
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        tokio::fs::remove_file(trace_path).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn say_with_an_active_body_is_recorded_as_delivered() {
+        let (hub, trace_path) =
+            test_hub(test_adapters(String::new(), String::new(), String::new())).await;
+        *hub.active_body.lock().await = Some("body-a".into());
+        hub.state.lock().await.turn = 4;
+        send_turn_reply(
+            hub.clone(),
+            4,
+            "有声".into(),
+            vec![1, 0, 2, 0],
+            32_000,
+            false,
+            "test",
+        )
+        .await;
+        let monitor = hub.monitor.lock().await.clone();
+        assert_eq!(monitor.say_sent, 1);
+        assert_eq!(monitor.say_undelivered, 0);
+        let last = monitor.last_say.as_ref().expect("say delivery is recorded");
+        assert!(last.delivered);
+        assert_eq!(last.active_body.as_deref(), Some("body-a"));
+        assert_eq!(last.reason, None);
+        let events = hub.events.lock().await.clone();
+        assert!(!events
+            .iter()
+            .any(|event| event.kind == "tts.no_playback_receiver"));
+        drop(events);
+        drop(monitor);
+        drop(hub);
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         tokio::fs::remove_file(trace_path).await.unwrap();
     }

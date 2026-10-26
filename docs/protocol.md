@@ -348,6 +348,7 @@ Malformed input produces a targeted frame:
 `fatal: true` means the Hub will close the connection after sending the error. Current codes include:
 
 - `invalid_message`
+- `unknown_type`
 - `unsupported_version`
 - `not_registered`
 - `invalid_binary_media`
@@ -357,12 +358,23 @@ Malformed input produces a targeted frame:
 - `stale_turn`
 - `invalid_host_ticket`
 
+Unknown message types are forward-compatible extensions, so they are reported with
+`code: "unknown_type"`, `fatal: false`, and the connection stays open. A frame whose
+`type` is known but whose fields are invalid is `invalid_message`, also non-fatal.
+An unsupported major version is fatal. The generated wire schema validates the
+known v1 message shapes and accepts an otherwise well-formed envelope with an
+unrecognized string `type` as an extension; consumers must ignore such extensions
+they do not implement. The Hub reports an unknown inbound type for observability
+without closing the connection.
+
 Clients should:
 
 1. Send `hello` first.
 2. Always include `v`.
 3. Ignore unknown fields and capabilities.
-4. Treat unknown message types as forward-compatible extensions.
+4. Treat unknown message types as forward-compatible extensions: log and ignore
+   them without dropping the connection. The Hub may report an inbound unknown
+   type with a non-fatal `protocol.error` frame.
 5. Avoid assuming that presence implies permission.
 
 ## Security

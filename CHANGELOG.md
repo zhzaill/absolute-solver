@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Completed the native TTS output loop: a Rust audio body advertises `speaker` plus `media: ["pcm16-binary"]`, receives `say` metadata with the matching `say.audio` frame, plays it on the local speaker, and records `playback` trace entries.
+- Added lenient protocol parsing: an unknown `type` now yields `protocol.error{code:"unknown_type",fatal:false}` and keeps the connection open; bodies log `unknown.type` and continue instead of dropping the socket.
+- Added `say` delivery accounting (`say_sent`, `say_undelivered`, `last_say`) and the `tts.no_playback_receiver` trace event for "synthesized but no audio body".
+- Fixed Hub restart recovery: a torn JSONL line no longer blocks startup (`load_trace_lossy` reports skipped records as `trace.recovered`), and `TraceWriter` terminates a torn tail before appending so the next record is not glued to it.
+- Defaulted `SOLVER_TTS_PROMPT_LANG` to `zh` to match the configured voice.
+- Added `tools/protocol-unknown-type-smoke.mjs` and release acceptance evidence under `D:\11\Logs\`.
+
 ## 0.3.0
 
 - Added scoped, short-lived Host presence intents with explicit local policy decisions.
