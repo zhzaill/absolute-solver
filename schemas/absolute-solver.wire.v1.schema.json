@@ -77,6 +77,13 @@
     },
     {
       "properties": {
+        "last": {
+          "description": "Marks the final segment of a segmented turn.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "media": {
           "type": [
             "string",
@@ -92,6 +99,15 @@
         },
         "pcm_b64": {
           "type": "string"
+        },
+        "seg_total": {
+          "description": "Segment count of a segmented turn; absent for a single-shot reply.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "seq": {
           "format": "uint64",

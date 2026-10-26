@@ -31,6 +31,12 @@ pub enum Message {
         text: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         media: Option<String>,
+        /// Segment count of a segmented turn; absent for a single-shot reply.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        seg_total: Option<u32>,
+        /// Marks the final segment of a segmented turn.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        last: Option<bool>,
     },
     #[serde(rename = "speech.start")]
     SpeechStart { at_ms: u64 },

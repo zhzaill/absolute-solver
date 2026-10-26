@@ -156,6 +156,40 @@ Clients that use local VAD should wait for `turn.started` before assigning binar
 - `media` is omitted for legacy base64 JSON audio.
 - When `media` is `pcm16-binary`, `pcm_b64` is empty and exactly one binary `say.audio` frame follows the JSON frame with matching `turn` and `seq`.
 
+### Segmented turns
+
+A reply may be split into several `say` frames of one `turn`:
+
+```json
+{
+  "v": 1,
+  "type": "say",
+  "turn": 12,
+  "seq": 2,
+  "pcm_b64": "",
+  "sr": 32000,
+  "mouth": [0.2, 0.6],
+  "text": "Second sentence of the reply.",
+  "media": "pcm16-binary",
+  "seg_total": 4,
+  "last": false
+}
+```
+
+- `seq` is the segment index within the turn, starting at `0`.
+- `seg_total` and `last` are optional and absent for a single-shot reply; they never
+  change the meaning of existing fields.
+- Bodies must play segments in `seq` order, drop a `seq` below the next expected
+  one (duplicate or stale), and drop every segment of a turn older than the turn
+  they are currently playing.
+- A body that does not understand the two fields keeps working: it receives the
+  frames in order and plays them sequentially.
+- The Hub keeps one turn `Speaking` until the summed PCM duration of the sent
+  segments elapses, then returns to `idle`.
+- A segment that fails synthesis is replaced by a subtitle `render.cue`; the turn
+  continues with the remaining segments. If the first segment fails, the whole
+  reply degrades to subtitle-only.
+
 ## Binary Media
 
 Binary frames are enabled only when the body advertises:

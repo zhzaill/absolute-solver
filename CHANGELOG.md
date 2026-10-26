@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added segmented TTS (first-segment-first): the Hub splits the reply on sentence boundaries, synthesizes segments with bounded concurrency (2), and streams `say` frames in `seq` order with optional `seg_total`/`last` fields; a failed first segment degrades the whole reply, a failed later segment degrades to a subtitle cue.
+- Added `segments` module: pure splitter with soft/hard character budgets that never cuts inside ASCII words, numbers, URLs, or inline code.
+- The audio body now queues segments (ordered by `next_seq`, bounded to 32, dropping duplicates, stale turns, and out-of-order arrivals) and plays them through one continuous cpal stream instead of one PowerShell process per segment, removing the inter-segment gap.
+- Fixed a playback defect found by ear: a mono buffer was written one sample per interleaved slot, so a stereo device played it at double speed. Frames are now filled per channel, with regression tests.
 - Completed the native TTS output loop: a Rust audio body advertises `speaker` plus `media: ["pcm16-binary"]`, receives `say` metadata with the matching `say.audio` frame, plays it on the local speaker, and records `playback` trace entries.
 - Added lenient protocol parsing: an unknown `type` now yields `protocol.error{code:"unknown_type",fatal:false}` and keeps the connection open; bodies log `unknown.type` and continue instead of dropping the socket.
 - Added `say` delivery accounting (`say_sent`, `say_undelivered`, `last_say`) and the `tts.no_playback_receiver` trace event for "synthesized but no audio body".

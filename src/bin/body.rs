@@ -1,6 +1,7 @@
 use std::{
     path::{Path, PathBuf},
     process::Command,
+    sync::mpsc,
     time::Duration,
 };
 
@@ -14,6 +15,7 @@ use absolute_solver::{
     TraceWriter,
 };
 use base64::Engine;
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_tungstenite::{
@@ -32,7 +34,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output_wav = std::env::var_os("SOLVER_OUTPUT_WAV").map(PathBuf::from);
     let play_say = env_bool("SOLVER_PLAY_SAY");
     let listen_only = env_bool("SOLVER_BODY_LISTEN_ONLY");
+    let mut capture_seconds = std::env::var("SOLVER_CAPTURE_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(|value| value.clamp(1, 30));
+    if listen_only && capture_seconds.is_some() {
+        return Err(
+            "SOLVER_BODY_LISTEN_ONLY and SOLVER_CAPTURE_SECONDS cannot be used together".into(),
+        );
+    }
     let replay_mode = input_wav.is_some();
+    let capture_mode = capture_seconds.is_some();
     let trace = TraceWriter::open(trace_path).await?;
     let mut simulated = false;
     let mut retry_seconds = 1u64;
@@ -51,10 +63,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     output_wav.as_deref(),
                     play_say,
                     listen_only,
+                    capture_seconds.take(),
                 )
                 .await
                 {
-                    Ok(()) if replay_mode => return Ok(()),
+                    Ok(()) if replay_mode || capture_mode => return Ok(()),
+                    Err(error) if capture_mode => return Err(error),
                     Ok(()) => {}
                     Err(error) => eprintln!("hub connection ended: {error}"),
                 }
@@ -81,6 +95,7 @@ async fn run_connection<S>(
     output_wav: Option<&Path>,
     play_say: bool,
     listen_only: bool,
+    capture_seconds: Option<u64>,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
     S: Sink<WsMessage>
@@ -102,6 +117,43 @@ where
     if listen_only {
         println!("listen-only body registered as {device_id}; waiting for say");
         return pump(socket, SayTarget::Forever, trace, output_wav, play_say).await;
+    }
+    if let Some(seconds) = capture_seconds {
+        *simulated = true;
+        let start = Message::SpeechStart { at_ms: now_ms() };
+        send(socket, &start, trace).await?;
+        let turn =
+            tokio::time::timeout(Duration::from_secs(10), receive_turn_started(socket, trace))
+                .await??;
+        let capture = tokio::task::spawn_blocking(move || capture_microphone(seconds))
+            .await
+            .map_err(std::io::Error::other)?;
+        let (sample_rate, pcm) = capture.map_err(std::io::Error::other)?;
+        println!(
+            "captured {seconds}s from default microphone: {} PCM bytes at {sample_rate} Hz",
+            pcm.len()
+        );
+        let chunk_size = (sample_rate as usize * 2 / 10).max(2);
+        for (seq, chunk) in pcm.chunks(chunk_size).enumerate() {
+            let audio = Message::AudioUp {
+                turn,
+                seq: seq as u64,
+                pcm_b64: base64::engine::general_purpose::STANDARD.encode(chunk),
+                sr: sample_rate,
+            };
+            send(socket, &audio, trace).await?;
+        }
+        let end = Message::SpeechEnd {
+            turn,
+            at_ms: now_ms(),
+        };
+        send(socket, &end, trace).await?;
+        tokio::time::timeout(
+            Duration::from_secs(90),
+            pump(socket, SayTarget::Turn(turn), trace, output_wav, play_say),
+        )
+        .await??;
+        return Ok(());
     }
     if !*simulated {
         let mut turn = hub_turn(url).await? + 1;
@@ -235,6 +287,333 @@ struct PendingSay {
     mouth: usize,
 }
 
+/// Ordered segment queue for one connection.
+///
+/// A `say` is only played when its `seq` is the next expected one; later
+/// segments wait in a bounded buffer, duplicates and stale turns are dropped.
+#[derive(Default)]
+struct SegmentQueue {
+    turn: u64,
+    next_seq: u64,
+    pending: std::collections::BTreeMap<u64, PlayJob>,
+    dropped: u64,
+    played: u64,
+}
+
+const QUEUE_DEPTH_LIMIT: usize = 32;
+
+impl SegmentQueue {
+    /// Returns the jobs that are now ready to play, in order.
+    fn accept(&mut self, job: PlayJob) -> Vec<PlayJob> {
+        if job.turn < self.turn || (job.turn == self.turn && job.seq < self.next_seq) {
+            self.dropped += 1;
+            println!(
+                "dropped stale say turn={} seq={}; current turn={} next_seq={}",
+                job.turn, job.seq, self.turn, self.next_seq
+            );
+            return Vec::new();
+        }
+        if job.turn > self.turn {
+            let stale = self.pending.len() as u64;
+            if stale > 0 {
+                println!(
+                    "turn changed {} -> {}; dropping {} queued segment(s)",
+                    self.turn, job.turn, stale
+                );
+            }
+            self.dropped += stale;
+            self.pending.clear();
+            self.turn = job.turn;
+            self.next_seq = 0;
+        }
+        if job.seq > self.next_seq {
+            if self.pending.len() >= QUEUE_DEPTH_LIMIT {
+                self.dropped += 1;
+                println!(
+                    "queue full ({} segments); dropped turn={} seq={}",
+                    QUEUE_DEPTH_LIMIT, job.turn, job.seq
+                );
+                return Vec::new();
+            }
+            self.pending.insert(job.seq, job);
+            return Vec::new();
+        }
+        let mut ready = vec![job];
+        self.next_seq = self.next_seq.saturating_add(1);
+        while let Some(next) = self.pending.remove(&self.next_seq) {
+            ready.push(next);
+            self.next_seq = self.next_seq.saturating_add(1);
+        }
+        ready
+    }
+
+    fn depth(&self) -> usize {
+        self.pending.len()
+    }
+}
+
+#[derive(Debug)]
+struct PlayJob {
+    turn: u64,
+    seq: u64,
+    sr: u32,
+    pcm: Vec<u8>,
+    text: String,
+    mouth: usize,
+    transport: &'static str,
+}
+
+#[derive(Debug)]
+struct PlayEvent {
+    turn: u64,
+    seq: u64,
+    audible: bool,
+    mouth: usize,
+    pcm_bytes: usize,
+    pcm_ms: u64,
+    player_ms: u64,
+    transport: &'static str,
+    error: Option<String>,
+}
+
+/// Owns the blocking playback thread. The thread creates the audio stream (cpal
+/// streams are not `Send` on Windows) and plays queued chunks back to back.
+struct Player {
+    jobs: Option<tokio::sync::mpsc::Sender<PlayJob>>,
+    events: tokio::sync::mpsc::Receiver<PlayEvent>,
+}
+
+impl Player {
+    fn start(play: bool) -> Self {
+        let (job_tx, mut job_rx) = tokio::sync::mpsc::channel::<PlayJob>(64);
+        let (event_tx, event_rx) = tokio::sync::mpsc::channel::<PlayEvent>(64);
+        let spawned = std::thread::Builder::new()
+            .name("absolute-solver-speaker".into())
+            .spawn(move || {
+                let mut speaker = if play {
+                    match Speaker::start() {
+                        Ok(speaker) => Some(speaker),
+                        Err(error) => {
+                            eprintln!(
+                                "speaker unavailable ({error}); falling back to WAV playback"
+                            );
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+                while let Some(job) = job_rx.blocking_recv() {
+                    let started = std::time::Instant::now();
+                    let pcm_ms = pcm_duration_ms(job.pcm.len(), job.sr);
+                    let error = if !play {
+                        None
+                    } else if let Some(speaker) = speaker.as_ref() {
+                        speaker.play(&job.pcm, job.sr).err()
+                    } else {
+                        fallback_play(&job)
+                    };
+                    let event = PlayEvent {
+                        turn: job.turn,
+                        seq: job.seq,
+                        audible: play && speaker.is_some(),
+                        mouth: job.mouth,
+                        pcm_bytes: job.pcm.len(),
+                        pcm_ms,
+                        player_ms: started.elapsed().as_millis() as u64,
+                        transport: job.transport,
+                        error,
+                    };
+                    if event_tx.blocking_send(event).is_err() {
+                        break;
+                    }
+                }
+                speaker.take();
+            });
+        if let Err(error) = spawned {
+            eprintln!("failed to start speaker thread: {error}");
+            return Self {
+                jobs: None,
+                events: event_rx,
+            };
+        }
+        Self {
+            jobs: Some(job_tx),
+            events: event_rx,
+        }
+    }
+
+    async fn submit(&self, jobs: Vec<PlayJob>) {
+        let Some(sender) = self.jobs.as_ref() else {
+            return;
+        };
+        for job in jobs {
+            println!(
+                "queued say turn={} seq={} sr={} pcm={} bytes text={}",
+                job.turn,
+                job.seq,
+                job.sr,
+                job.pcm.len(),
+                job.text
+            );
+            if sender.send(job).await.is_err() {
+                eprintln!("speaker thread stopped; dropping queued segment");
+            }
+        }
+    }
+}
+
+struct Speaker {
+    shared: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<f32>>>,
+    #[allow(dead_code)]
+    stream: cpal::Stream,
+    rate: u32,
+}
+
+impl Speaker {
+    fn start() -> Result<Self, String> {
+        let host = cpal::default_host();
+        let device = host
+            .default_output_device()
+            .ok_or_else(|| "no default output device".to_owned())?;
+        let supported = device
+            .default_output_config()
+            .map_err(|error| error.to_string())?;
+        let rate = supported.sample_rate().0;
+        let format = supported.sample_format();
+        let config: cpal::StreamConfig = supported.into();
+        // A mono source has to be written once per interleaved frame, otherwise a
+        // stereo device consumes the buffer twice as fast (audible 2x speed).
+        let channels = usize::from(config.channels);
+        println!(
+            "speaker stream: {} Hz, {} channel(s), {:?}",
+            rate, channels, format
+        );
+        let shared = std::sync::Arc::new(std::sync::Mutex::new(
+            std::collections::VecDeque::<f32>::new(),
+        ));
+        let stream = match format {
+            cpal::SampleFormat::F32 => {
+                let buffer = shared.clone();
+                device
+                    .build_output_stream(
+                        &config,
+                        move |data: &mut [f32], _| drain_into_f32(data, channels, &buffer),
+                        |error| eprintln!("output stream error: {error}"),
+                        None,
+                    )
+                    .map_err(|error| error.to_string())?
+            }
+            cpal::SampleFormat::I16 => {
+                let buffer = shared.clone();
+                device
+                    .build_output_stream(
+                        &config,
+                        move |data: &mut [i16], _| drain_into_i16(data, channels, &buffer),
+                        |error| eprintln!("output stream error: {error}"),
+                        None,
+                    )
+                    .map_err(|error| error.to_string())?
+            }
+            other => return Err(format!("unsupported output sample format {other:?}")),
+        };
+        stream.play().map_err(|error| error.to_string())?;
+        Ok(Self {
+            shared,
+            stream,
+            rate,
+        })
+    }
+
+    fn play(&self, pcm: &[u8], sample_rate: u32) -> Result<(), String> {
+        let duration = pcm_duration_ms(pcm.len(), sample_rate);
+        if !pcm.is_empty() && sample_rate > 0 {
+            let samples: Vec<f32> = pcm
+                .chunks_exact(2)
+                .map(|frame| i16::from_le_bytes([frame[0], frame[1]]) as f32 / 32768.0)
+                .collect();
+            let resampled = resample_linear(&samples, sample_rate, self.rate);
+            let mut buffer = self
+                .shared
+                .lock()
+                .map_err(|_| "speaker buffer poisoned".to_owned())?;
+            buffer.extend(resampled);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(duration));
+        Ok(())
+    }
+}
+
+fn drain_into_f32(
+    data: &mut [f32],
+    channels: usize,
+    buffer: &std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<f32>>>,
+) {
+    let mut queue = match buffer.lock() {
+        Ok(queue) => queue,
+        Err(_) => {
+            data.fill(0.0);
+            return;
+        }
+    };
+    // One mono sample per interleaved frame, duplicated to every channel.
+    for frame in data.chunks_mut(channels.max(1)) {
+        let sample = queue.pop_front().unwrap_or(0.0);
+        for slot in frame.iter_mut() {
+            *slot = sample;
+        }
+    }
+}
+
+fn drain_into_i16(
+    data: &mut [i16],
+    channels: usize,
+    buffer: &std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<f32>>>,
+) {
+    let mut queue = match buffer.lock() {
+        Ok(queue) => queue,
+        Err(_) => {
+            data.fill(0);
+            return;
+        }
+    };
+    for frame in data.chunks_mut(channels.max(1)) {
+        let sample = queue.pop_front().unwrap_or(0.0).clamp(-1.0, 1.0);
+        let scaled = (sample * i16::MAX as f32) as i16;
+        for slot in frame.iter_mut() {
+            *slot = scaled;
+        }
+    }
+}
+
+fn resample_linear(samples: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
+    if samples.is_empty() {
+        return Vec::new();
+    }
+    if from_rate == to_rate || from_rate == 0 || to_rate == 0 {
+        return samples.to_vec();
+    }
+    let ratio = to_rate as f64 / from_rate as f64;
+    let output_len = ((samples.len() as f64) * ratio).round() as usize;
+    let mut output = Vec::with_capacity(output_len);
+    for index in 0..output_len {
+        let position = index as f64 / ratio;
+        let base = position.floor() as usize;
+        let fraction = (position - base as f64) as f32;
+        let first = samples.get(base).copied().unwrap_or(0.0);
+        let second = samples.get(base + 1).copied().unwrap_or(first);
+        output.push(first + (second - first) * fraction);
+    }
+    output
+}
+
+fn pcm_duration_ms(bytes: usize, sample_rate: u32) -> u64 {
+    if sample_rate == 0 {
+        return 0;
+    }
+    (bytes as u64 * 1_000 / (u64::from(sample_rate) * 2)).max(1)
+}
+
 /// Consumes hub frames until the target turn is fulfilled or the socket closes.
 async fn pump<S>(
     socket: &mut S,
@@ -246,151 +625,187 @@ async fn pump<S>(
 where
     S: Stream<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin,
 {
-    let mut pending: Option<PendingSay> = None;
-    let mut last_turn = 0u64;
-    let mut last_seq = 0u64;
-    while let Some(frame) = socket.next().await {
-        match frame? {
-            WsMessage::Text(text) => {
-                let message = match decode_wire_message(&text) {
-                    Ok(message) => message,
-                    Err(WireDecodeError::UnknownType { kind }) => {
-                        println!("ignored unknown hub message type: {kind}");
-                        trace.write(unknown_type_event("hub->body", &kind)).await?;
-                        continue;
-                    }
-                    Err(error) => {
-                        println!("ignored invalid hub message: {error}");
-                        continue;
-                    }
+    let mut pending_meta: Option<PendingSay> = None;
+    let mut queue = SegmentQueue::default();
+    let mut player = Player::start(play_say);
+    loop {
+        tokio::select! {
+            frame = socket.next() => {
+                let Some(frame) = frame else {
+                    return Err("hub closed before say".into());
                 };
-                let Message::Say {
-                    turn,
-                    seq,
-                    pcm_b64,
-                    sr,
-                    mouth,
-                    text,
-                    media,
-                } = &message
-                else {
-                    trace
-                        .write(trace_event(
-                            "hub->body",
-                            &message,
-                            "received while waiting for say",
-                        ))
-                        .await?;
-                    continue;
-                };
-                if media.as_deref() == Some("pcm16-binary") {
-                    trace
-                        .write(trace_event(
-                            "hub->body",
-                            &message,
-                            format!("say metadata turn={turn} seq={seq}; awaiting binary frame"),
-                        ))
-                        .await?;
-                    pending = Some(PendingSay {
-                        turn: *turn,
-                        seq: *seq,
-                        sr: *sr,
-                        text: text.clone(),
-                        mouth: mouth.len(),
-                    });
-                    continue;
+                match frame? {
+                    WsMessage::Text(text) => {
+                        let message = match decode_wire_message(&text) {
+                            Ok(message) => message,
+                            Err(WireDecodeError::UnknownType { kind }) => {
+                                println!("ignored unknown hub message type: {kind}");
+                                trace.write(unknown_type_event("hub->body", &kind)).await?;
+                                continue;
+                            }
+                            Err(error) => {
+                                println!("ignored invalid hub message: {error}");
+                                continue;
+                            }
+                        };
+                        let Message::Say {
+                            turn,
+                            seq,
+                            pcm_b64,
+                            sr,
+                            mouth,
+                            text,
+                            media,
+                            seg_total,
+                            last: _last,
+                        } = &message
+                        else {
+                            trace
+                                .write(trace_event(
+                                    "hub->body",
+                                    &message,
+                                    "received while waiting for say",
+                                ))
+                                .await?;
+                            continue;
+                        };
+                        if media.as_deref() == Some("pcm16-binary") {
+                            trace
+                                .write(trace_event(
+                                    "hub->body",
+                                    &message,
+                                    format!(
+                                        "say metadata turn={turn} seq={seq} seg_total={seg_total:?}; awaiting binary frame"
+                                    ),
+                                ))
+                                .await?;
+                            pending_meta = Some(PendingSay {
+                                turn: *turn,
+                                seq: *seq,
+                                sr: *sr,
+                                text: text.clone(),
+                                mouth: mouth.len(),
+                            });
+                            continue;
+                        }
+                        let pcm = base64::Engine::decode(
+                            &base64::engine::general_purpose::STANDARD,
+                            pcm_b64,
+                        )?;
+                        trace
+                            .write(trace_event(
+                                "hub->body",
+                                &message,
+                                format!("say turn={turn} seq={seq} seg_total={seg_total:?}; json-base64"),
+                            ))
+                            .await?;
+                        let job = PlayJob {
+                            turn: *turn,
+                            seq: *seq,
+                            sr: *sr,
+                            pcm,
+                            text: text.clone(),
+                            mouth: mouth.len(),
+                            transport: "json-base64",
+                        };
+                        if let Some(path) = output_wav {
+                            save_diagnostic_wav(path, &job).await?;
+                        }
+                        player.submit(queue.accept(job)).await;
+                    }
+                    WsMessage::Binary(bytes) => {
+                        let frame = match BinaryMediaFrame::decode(&bytes) {
+                            Ok(frame) => frame,
+                            Err(error) => {
+                                println!("ignored invalid binary media frame: {error}");
+                                continue;
+                            }
+                        };
+                        if frame.kind != BinaryMediaKind::SayAudio {
+                            println!("ignored binary media kind {:?}", frame.kind);
+                            continue;
+                        }
+                        let Some(metadata) = pending_meta.take() else {
+                            queue.dropped += 1;
+                            println!(
+                                "dropped say.audio turn={} seq={} without metadata",
+                                frame.turn, frame.seq
+                            );
+                            continue;
+                        };
+                        if metadata.turn != frame.turn || metadata.seq != frame.seq {
+                            queue.dropped += 1;
+                            println!(
+                                "dropped say.audio turn={} seq={}; metadata was turn={} seq={}",
+                                frame.turn, frame.seq, metadata.turn, metadata.seq
+                            );
+                            continue;
+                        }
+                        let sr = if metadata.sr == frame.sample_rate {
+                            frame.sample_rate
+                        } else {
+                            println!(
+                                "say.audio sample rate mismatch: metadata={} frame={}",
+                                metadata.sr, frame.sample_rate
+                            );
+                            frame.sample_rate
+                        };
+                        let job = PlayJob {
+                            turn: frame.turn,
+                            seq: frame.seq,
+                            sr,
+                            pcm: frame.pcm,
+                            text: metadata.text,
+                            mouth: metadata.mouth,
+                            transport: "pcm16-binary",
+                        };
+                        if let Some(path) = output_wav {
+                            save_diagnostic_wav(path, &job).await?;
+                        }
+                        println!("queue depth before turn={} seq={}: {}", job.turn, job.seq, queue.depth());
+                        player.submit(queue.accept(job)).await;
+                    }
+                    WsMessage::Close(_) => return Err("hub closed the websocket".into()),
+                    _ => {}
                 }
-                let pcm =
-                    base64::Engine::decode(&base64::engine::general_purpose::STANDARD, pcm_b64)?;
+            }
+            Some(event) = player.events.recv() => {
+                queue.played += 1;
+                let playback = match (&event.error, event.audible) {
+                    (Some(error), _) => format!("playback failed: {error}"),
+                    (None, true) => format!("played; player_ms={}; pcm_ms={}", event.player_ms, event.pcm_ms),
+                    (None, false) => format!("skipped (no audio output); pcm_ms={}", event.pcm_ms),
+                };
+                println!(
+                    "say turn={} seq={} pcm={} bytes mouth={} transport={} {playback}",
+                    event.turn, event.seq, event.pcm_bytes, event.mouth, event.transport
+                );
                 trace
-                    .write(trace_event(
-                        "hub->body",
-                        &message,
-                        format!("say turn={turn} seq={seq}; json-base64"),
-                    ))
+                    .write(TraceEvent {
+                        ts: absolute_solver::epoch_ms(),
+                        dir: "body".into(),
+                        kind: "playback".into(),
+                        turn: Some(event.turn),
+                        seq: Some(event.seq),
+                        note: format!(
+                            "pcm={} bytes; mouth={}; pcm_ms={}; transport={}; {}; queue_depth={}; played={}; dropped={}",
+                            event.pcm_bytes,
+                            event.mouth,
+                            event.pcm_ms,
+                            event.transport,
+                            playback,
+                            queue.depth(),
+                            queue.played,
+                            queue.dropped
+                        ),
+                    })
                     .await?;
-                let handled = deliver(
-                    trace,
-                    SayAudio {
-                        turn: *turn,
-                        seq: *seq,
-                        sr: *sr,
-                        pcm,
-                        text: text.clone(),
-                        mouth: mouth.len(),
-                        transport: "json-base64",
-                    },
-                    output_wav,
-                    play_say,
-                    &mut last_turn,
-                    &mut last_seq,
-                )
-                .await?;
-                if handled && fulfilled(target, *turn) {
+                if fulfilled(target, event.turn) && queue.depth() == 0 {
                     return Ok(());
                 }
             }
-            WsMessage::Binary(bytes) => {
-                let frame = match BinaryMediaFrame::decode(&bytes) {
-                    Ok(frame) => frame,
-                    Err(error) => {
-                        println!("ignored invalid binary media frame: {error}");
-                        continue;
-                    }
-                };
-                if frame.kind != BinaryMediaKind::SayAudio {
-                    println!("ignored binary media kind {:?}", frame.kind);
-                    continue;
-                }
-                let Some(metadata) = pending.take() else {
-                    println!(
-                        "dropped say.audio turn={} seq={} without metadata",
-                        frame.turn, frame.seq
-                    );
-                    continue;
-                };
-                if metadata.turn != frame.turn || metadata.seq != frame.seq {
-                    println!(
-                        "dropped say.audio turn={} seq={}; metadata was turn={} seq={}",
-                        frame.turn, frame.seq, metadata.turn, metadata.seq
-                    );
-                    continue;
-                }
-                let sr = if metadata.sr == frame.sample_rate {
-                    frame.sample_rate
-                } else {
-                    println!(
-                        "say.audio sample rate mismatch: metadata={} frame={}",
-                        metadata.sr, frame.sample_rate
-                    );
-                    frame.sample_rate
-                };
-                let handled = deliver(
-                    trace,
-                    SayAudio {
-                        turn: frame.turn,
-                        seq: frame.seq,
-                        sr,
-                        pcm: frame.pcm,
-                        text: metadata.text,
-                        mouth: metadata.mouth,
-                        transport: "pcm16-binary",
-                    },
-                    output_wav,
-                    play_say,
-                    &mut last_turn,
-                    &mut last_seq,
-                )
-                .await?;
-                if handled && fulfilled(target, frame.turn) {
-                    return Ok(());
-                }
-            }
-            WsMessage::Close(_) => return Err("hub closed the websocket".into()),
-            _ => {}
         }
     }
-    Err("hub closed before say".into())
 }
 
 fn fulfilled(target: SayTarget, turn: u64) -> bool {
@@ -400,90 +815,20 @@ fn fulfilled(target: SayTarget, turn: u64) -> bool {
     }
 }
 
-struct SayAudio {
-    turn: u64,
-    seq: u64,
-    sr: u32,
-    pcm: Vec<u8>,
-    text: String,
-    mouth: usize,
-    transport: &'static str,
-}
-
-/// Writes the diagnostic WAV when asked, plays the PCM, and records the result.
-async fn deliver(
-    trace: &absolute_solver::SharedTrace,
-    audio: SayAudio,
-    output_wav: Option<&Path>,
-    play_say: bool,
-    last_turn: &mut u64,
-    last_seq: &mut u64,
-) -> Result<bool, Box<dyn std::error::Error>> {
-    let bytes = audio.pcm.len();
-    let duration_ms = if audio.sr == 0 {
-        0
-    } else {
-        bytes as u64 * 1_000 / (u64::from(audio.sr) * 2)
-    };
-    if audio.turn < *last_turn || (audio.turn == *last_turn && audio.seq <= *last_seq) {
-        println!(
-            "dropped out-of-order say turn={} seq={}; last turn={} seq={}",
-            audio.turn, audio.seq, *last_turn, *last_seq
-        );
-        return Ok(false);
-    }
-    *last_turn = audio.turn;
-    *last_seq = audio.seq;
-    let mut saved: Option<PathBuf> = None;
-    if let Some(path) = output_wav {
-        write_wav(path, &audio.pcm, audio.sr).await?;
-        println!("saved response audio to {path:?}");
-        saved = Some(path.to_path_buf());
-    }
-    let mut playback = "skipped".to_owned();
-    if play_say && bytes > 0 {
-        let transient = saved.is_none();
-        let path = match saved.clone() {
-            Some(path) => path,
-            None => transient_wav_path(audio.turn),
-        };
-        if transient {
-            write_wav(&path, &audio.pcm, audio.sr).await?;
-        }
-        let started = std::time::Instant::now();
-        match play_wav(&path) {
-            Ok(()) => {
-                playback = format!(
-                    "played; player_ms={}; pcm_ms={duration_ms}",
-                    started.elapsed().as_millis()
-                );
-            }
-            Err(error) => playback = format!("playback failed: {error}"),
-        }
-        if transient {
-            let _ = tokio::fs::remove_file(&path).await;
-        }
-    } else if bytes == 0 {
-        playback = "empty pcm; nothing to play".to_owned();
-    }
-    println!(
-        "say turn={} seq={} sr={} pcm={bytes} bytes mouth={} transport={} {playback} text={}",
-        audio.turn, audio.seq, audio.sr, audio.mouth, audio.transport, audio.text
-    );
-    trace
-        .write(TraceEvent {
-            ts: absolute_solver::epoch_ms(),
-            dir: "body".into(),
-            kind: "playback".into(),
-            turn: Some(audio.turn),
-            seq: Some(audio.seq),
-            note: format!(
-                "sr={}; pcm={bytes} bytes; pcm_ms={duration_ms}; transport={}; {}",
-                audio.sr, audio.transport, playback
-            ),
-        })
-        .await?;
-    Ok(true)
+/// Writes one diagnostic WAV per segment when `SOLVER_OUTPUT_WAV` is set.
+async fn save_diagnostic_wav(base: &Path, job: &PlayJob) -> Result<(), Box<dyn std::error::Error>> {
+    let stem = base
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().to_string())
+        .unwrap_or_else(|| "segment".into());
+    let extension = base
+        .extension()
+        .map(|extension| extension.to_string_lossy().to_string())
+        .unwrap_or_else(|| "wav".into());
+    let path = base.with_file_name(format!("{stem}-t{}-s{}.{}", job.turn, job.seq, extension));
+    write_wav(&path, &job.pcm, job.sr).await?;
+    println!("saved response audio to {path:?}");
+    Ok(())
 }
 
 fn unknown_type_event(dir: &str, kind: &str) -> TraceEvent {
@@ -510,6 +855,17 @@ async fn write_wav(
 }
 
 /// Transient playback file; removed after the speaker finishes.
+/// Last-resort playback for machines without a usable cpal output device.
+fn fallback_play(job: &PlayJob) -> Option<String> {
+    let path = transient_wav_path(job.turn);
+    if let Err(error) = std::fs::write(&path, pcm16_wav(&job.pcm, job.sr.max(1))) {
+        return Some(format!("wav write failed: {error}"));
+    }
+    let outcome = play_wav(&path);
+    let _ = std::fs::remove_file(&path);
+    outcome.err().map(|error| error.to_string())
+}
+
 fn transient_wav_path(turn: u64) -> PathBuf {
     std::env::temp_dir().join(format!(
         "absolute-solver-say-{turn}-{}.wav",
@@ -615,6 +971,111 @@ fn play_wav(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{drain_into_f32, resample_linear, send_input_samples};
+    use std::collections::VecDeque;
+    use std::sync::{mpsc, Arc, Mutex};
+
+    #[test]
+    fn microphone_samples_downmix_stereo_to_mono() {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        send_input_samples(&[100i16, 300, -100, 100], 2, &sender);
+        assert_eq!(receiver.recv().unwrap(), vec![200, 0]);
+    }
+
+    #[test]
+    fn microphone_float_samples_convert_to_pcm16() {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        send_input_samples(&[-1.0f32, 0.0, 1.0], 1, &sender);
+        assert_eq!(receiver.recv().unwrap(), vec![i16::MIN, 0, i16::MAX]);
+    }
+
+    #[test]
+    fn interleaved_frames_take_one_mono_sample_each() {
+        // A stereo device must not consume the mono buffer twice as fast, which
+        // is what made the first segmented run play at double speed.
+        let buffer = Arc::new(Mutex::new(VecDeque::from(vec![0.25f32, 0.5, 0.75])));
+        let mut data = [0f32; 6];
+        drain_into_f32(&mut data, 2, &buffer);
+        assert_eq!(data, [0.25, 0.25, 0.5, 0.5, 0.75, 0.75]);
+        assert!(buffer.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn resampling_preserves_duration() {
+        let one_second_at_32k = vec![0.0f32; 32_000];
+        let upsampled = resample_linear(&one_second_at_32k, 32_000, 48_000);
+        assert_eq!(upsampled.len(), 48_000);
+        let back = resample_linear(&upsampled, 48_000, 32_000);
+        assert_eq!(back.len(), 32_000);
+        assert_eq!(resample_linear(&[0.1, 0.2], 32_000, 32_000), vec![0.1, 0.2]);
+    }
+
+    fn job(turn: u64, seq: u64) -> super::PlayJob {
+        super::PlayJob {
+            turn,
+            seq,
+            sr: 32_000,
+            pcm: vec![0, 0],
+            text: format!("seg-{seq}"),
+            mouth: 1,
+            transport: "pcm16-binary",
+        }
+    }
+
+    #[test]
+    fn queue_plays_in_order_and_buffers_early_segments() {
+        let mut queue = super::SegmentQueue::default();
+        let first = queue.accept(job(1, 0));
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].seq, 0);
+        // A segment that arrives before its predecessor waits in the buffer.
+        assert!(queue.accept(job(1, 2)).is_empty());
+        let drained = queue.accept(job(1, 1));
+        assert_eq!(
+            drained.iter().map(|job| job.seq).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert_eq!(queue.depth(), 0);
+    }
+
+    #[test]
+    fn queue_drops_duplicate_and_stale_segments() {
+        let mut queue = super::SegmentQueue::default();
+        assert_eq!(queue.accept(job(2, 0)).len(), 1);
+        assert!(queue.accept(job(2, 0)).is_empty());
+        assert_eq!(queue.dropped, 1);
+        assert!(queue.accept(job(1, 3)).is_empty());
+        assert_eq!(queue.dropped, 2);
+    }
+
+    #[test]
+    fn queue_resets_on_a_new_turn() {
+        let mut queue = super::SegmentQueue::default();
+        assert_eq!(queue.accept(job(3, 0)).len(), 1);
+        assert!(queue.accept(job(3, 2)).is_empty());
+        assert_eq!(queue.depth(), 1);
+        assert_eq!(queue.accept(job(4, 0)).len(), 1);
+        assert_eq!(queue.depth(), 0);
+        assert_eq!(queue.dropped, 1);
+    }
+
+    #[test]
+    fn queue_is_bounded() {
+        let mut queue = super::SegmentQueue::default();
+        assert_eq!(queue.accept(job(5, 0)).len(), 1);
+        // Everything after the gap waits, so the buffer can fill up.
+        for seq in 2..=(super::QUEUE_DEPTH_LIMIT as u64 + 1) {
+            assert!(queue.accept(job(5, seq)).is_empty());
+        }
+        assert_eq!(queue.depth(), super::QUEUE_DEPTH_LIMIT);
+        assert!(queue.accept(job(5, 999)).is_empty());
+        assert_eq!(queue.depth(), super::QUEUE_DEPTH_LIMIT);
+        assert_eq!(queue.dropped, 1);
+    }
+}
+
 fn env_bool(name: &str) -> bool {
     std::env::var(name)
         .ok()
@@ -635,4 +1096,132 @@ fn fake_pcm(seq: u64) -> Vec<u8> {
         pcm.extend_from_slice(&value.to_le_bytes());
     }
     pcm
+}
+
+/// Captures one bounded utterance from the system default input device.
+/// The PCM remains in memory and is discarded after the turn is sent.
+fn capture_microphone(
+    seconds: u64,
+) -> Result<(u32, Vec<u8>), Box<dyn std::error::Error + Send + Sync>> {
+    let host = cpal::default_host();
+    let device = host
+        .default_input_device()
+        .ok_or("no default microphone input device")?;
+    let config = device.default_input_config()?;
+    let sample_rate = config.sample_rate().0;
+    let channels = usize::from(config.channels().max(1));
+    let (sender, receiver) = mpsc::sync_channel::<Vec<i16>>(32);
+    let error_callback = |error| eprintln!("microphone stream error: {error}");
+    let stream = match config.sample_format() {
+        cpal::SampleFormat::I16 => device.build_input_stream(
+            &config.config(),
+            move |data: &[i16], _| send_input_samples(data, channels, &sender),
+            error_callback,
+            None,
+        )?,
+        cpal::SampleFormat::U16 => device.build_input_stream(
+            &config.config(),
+            move |data: &[u16], _| {
+                let converted: Vec<i16> = data
+                    .iter()
+                    .map(|sample| {
+                        (*sample as i32 - 32_768).clamp(i16::MIN as i32, i16::MAX as i32) as i16
+                    })
+                    .collect();
+                send_input_samples(&converted, channels, &sender);
+            },
+            error_callback,
+            None,
+        )?,
+        cpal::SampleFormat::F32 => device.build_input_stream(
+            &config.config(),
+            move |data: &[f32], _| {
+                let converted: Vec<i16> = data
+                    .iter()
+                    .map(|sample| (sample.clamp(-1.0, 1.0) * 32_767.0) as i16)
+                    .collect();
+                send_input_samples(&converted, channels, &sender);
+            },
+            error_callback,
+            None,
+        )?,
+        format => return Err(format!("unsupported microphone sample format {format:?}").into()),
+    };
+    stream.play()?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(seconds);
+    let mut pcm = Vec::new();
+    while std::time::Instant::now() < deadline {
+        if let Ok(chunk) = receiver.recv_timeout(Duration::from_millis(100)) {
+            pcm.extend_from_slice(&chunk);
+        }
+    }
+    drop(stream);
+    while let Ok(chunk) = receiver.try_recv() {
+        pcm.extend_from_slice(&chunk);
+    }
+    if pcm.is_empty() {
+        return Err("microphone produced no PCM samples".into());
+    }
+    Ok((
+        sample_rate,
+        pcm.into_iter().flat_map(i16::to_le_bytes).collect(),
+    ))
+}
+
+fn send_input_samples<T: cpal::SizedSample + Copy>(
+    data: &[T],
+    channels: usize,
+    sender: &mpsc::SyncSender<Vec<i16>>,
+) where
+    i16: cpal::FromSample<T>,
+{
+    let mut mono = Vec::with_capacity(data.len() / channels.max(1));
+    for frame in data.chunks(channels.max(1)) {
+        let sum: i32 = frame
+            .iter()
+            .map(|sample| i32::from((*sample).to_sample::<i16>()))
+            .sum();
+        mono.push((sum / frame.len() as i32).clamp(i16::MIN as i32, i16::MAX as i32) as i16);
+    }
+    let _ = sender.try_send(mono);
+}
+
+async fn receive_turn_started<S>(
+    socket: &mut S,
+    trace: &absolute_solver::SharedTrace,
+) -> Result<u64, Box<dyn std::error::Error>>
+where
+    S: Stream<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin,
+{
+    while let Some(frame) = socket.next().await {
+        let WsMessage::Text(text) = frame? else {
+            continue;
+        };
+        match decode_wire_message(&text) {
+            Ok(Message::TurnStarted { turn }) => {
+                trace
+                    .write(TraceEvent {
+                        ts: now_ms(),
+                        dir: "hub->body".into(),
+                        kind: "turn.started".into(),
+                        turn: Some(turn),
+                        seq: None,
+                        note: "microphone capture turn assigned".into(),
+                    })
+                    .await?;
+                return Ok(turn);
+            }
+            Ok(message) => {
+                trace
+                    .write(trace_event(
+                        "hub->body",
+                        &message,
+                        "received before microphone turn",
+                    ))
+                    .await?;
+            }
+            Err(error) => eprintln!("ignored hub message before turn assignment: {error}"),
+        }
+    }
+    Err("hub closed before assigning microphone turn".into())
 }

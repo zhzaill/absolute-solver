@@ -67,6 +67,59 @@ struct Hub {
     memory: Arc<MemoryStore>,
     listen: String,
     trace_path: String,
+    segments: SegmentConfig,
+}
+
+/// Segmented TTS switch and budgets (`docs/tasks/2026-10-26-tts-segmented.md`).
+#[derive(Debug, Clone, Copy)]
+struct SegmentConfig {
+    enabled: bool,
+    limits: absolute_solver::segments::SegmentLimits,
+    concurrency: usize,
+}
+
+impl SegmentConfig {
+    fn from_env() -> Self {
+        let limits = absolute_solver::segments::SegmentLimits::new(
+            env_usize("SOLVER_TTS_SEGMENT_SOFT_CHARS", 24),
+            env_usize("SOLVER_TTS_SEGMENT_MAX_CHARS", 48),
+        );
+        Self {
+            enabled: env_flag("SOLVER_TTS_SEGMENTED"),
+            limits,
+            concurrency: env_usize("SOLVER_TTS_SEGMENT_CONCURRENCY", 2).clamp(1, 2),
+        }
+    }
+}
+
+impl Default for SegmentConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            limits: absolute_solver::segments::SegmentLimits::default(),
+            concurrency: 2,
+        }
+    }
+}
+
+fn env_usize(name: &str, fallback: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(fallback)
+}
+
+fn env_flag(name: &str) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
 }
 
 struct PendingAudio {
@@ -164,6 +217,12 @@ struct Monitor {
     tts_errors: u64,
     tts_last_latency_ms: Option<u64>,
     tts_output_bytes: u64,
+    tts_segments: u32,
+    tts_first_segment_ms: Option<u64>,
+    tts_first_say_ms: Option<u64>,
+    segments_sent: u64,
+    segments_dropped: u64,
+    tts_segment_latencies_ms: Vec<u64>,
     say_sent: u64,
     say_undelivered: u64,
     last_say: Option<SayDelivery>,
@@ -400,6 +459,12 @@ impl Default for Monitor {
             tts_errors: 0,
             tts_last_latency_ms: None,
             tts_output_bytes: 0,
+            tts_segments: 0,
+            tts_first_segment_ms: None,
+            tts_first_say_ms: None,
+            segments_sent: 0,
+            segments_dropped: 0,
+            tts_segment_latencies_ms: Vec::new(),
             say_sent: 0,
             say_undelivered: 0,
             last_say: None,
@@ -664,7 +729,7 @@ fn prepare_connection_message(
     if !binary_audio {
         return (message, None);
     }
-    let (turn, seq, pcm_b64, sr, mouth, text) = match message {
+    let (turn, seq, pcm_b64, sr, mouth, text, seg_total, last) = match message {
         Message::Say {
             turn,
             seq,
@@ -672,8 +737,10 @@ fn prepare_connection_message(
             sr,
             mouth,
             text,
+            seg_total,
+            last,
             ..
-        } => (turn, seq, pcm_b64, sr, mouth, text),
+        } => (turn, seq, pcm_b64, sr, mouth, text, seg_total, last),
         other => return (other, None),
     };
     let Ok(pcm) = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &pcm_b64)
@@ -687,6 +754,8 @@ fn prepare_connection_message(
                 mouth,
                 text,
                 media: None,
+                seg_total,
+                last,
             },
             None,
         );
@@ -700,6 +769,8 @@ fn prepare_connection_message(
             mouth,
             text,
             media: Some("pcm16-binary".into()),
+            seg_total,
+            last,
         },
         Some(BinaryMediaFrame {
             kind: BinaryMediaKind::SayAudio,
@@ -960,6 +1031,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         memory,
         listen: listen.clone(),
         trace_path: trace_path_display,
+        segments: SegmentConfig::from_env(),
     });
     tokio::spawn(cortico_monitor_loop(hub.clone()));
     tokio::spawn(robotics_world_loop(hub.clone()));
@@ -2094,6 +2166,9 @@ async fn process_persona_expression(
     }
     // === END PRESENCE METADATA HANDLING ===
 
+    if hub.segments.enabled && run_segmented_turn(&hub, turn, &answer).await {
+        return;
+    }
     let tts_started = std::time::Instant::now();
     hub.monitor.lock().await.tts_calls += 1;
     let (pcm, sample_rate, degraded, note) = match hub.adapters.synthesize(&answer).await {
@@ -2834,6 +2909,9 @@ async fn process_turn(hub: Arc<Hub>, turn: u64, pending: PendingAudio) {
         }
     }
 
+    if hub.segments.enabled && run_segmented_turn(&hub, turn, &answer).await {
+        return;
+    }
     let tts_started = std::time::Instant::now();
     hub.monitor.lock().await.tts_calls += 1;
     let (output_pcm, output_rate, tts_note, tts_degraded): (Vec<u8>, u32, String, bool) =
@@ -2989,43 +3067,13 @@ async fn send_turn_reply(
         mouth: absolute_solver::mouth_from_pcm(&pcm),
         text,
         media: None,
+        seg_total: None,
+        last: None,
     };
     let note = note.into();
     hub.record_system_for_turn("turn.pipeline", format!("turn={turn}; {note}"), Some(turn))
         .await;
-    let active_body = hub.active_body.lock().await.clone();
-    {
-        let mut monitor = hub.monitor.lock().await;
-        if active_body.is_some() {
-            monitor.say_sent += 1;
-        } else {
-            monitor.say_undelivered += 1;
-        }
-        monitor.last_say = Some(SayDelivery {
-            turn,
-            pcm_bytes: output_bytes as u64,
-            sample_rate: sample_rate.max(1),
-            delivered: active_body.is_some(),
-            active_body: active_body.clone(),
-            reason: if active_body.is_some() {
-                None
-            } else {
-                Some("no active audio body")
-            },
-            at_ms: wall_ms(),
-        });
-    }
-    if active_body.is_none() {
-        hub.record_system_for_turn(
-            "tts.no_playback_receiver",
-            format!(
-                "turn={turn}; synthesized={output_bytes} bytes at {} Hz; no active audio body",
-                sample_rate.max(1)
-            ),
-            Some(turn),
-        )
-        .await;
-    }
+    record_say_delivery(&hub, turn, output_bytes, sample_rate.max(1)).await;
     hub.record(
         "hub->body",
         &response,
@@ -3042,8 +3090,16 @@ async fn send_turn_reply(
     let playback_ms = if output_bytes == 0 {
         3_000
     } else {
-        (output_bytes as u64 * 1_000 / (u64::from(sample_rate.max(1)) * 2)).max(1)
+        pcm_duration_ms(output_bytes, sample_rate.max(1))
     };
+    schedule_idle_after(hub, turn, playback_ms);
+}
+
+fn pcm_duration_ms(bytes: usize, sample_rate: u32) -> u64 {
+    (bytes as u64 * 1_000 / (u64::from(sample_rate.max(1)) * 2)).max(1)
+}
+
+fn schedule_idle_after(hub: Arc<Hub>, turn: u64, playback_ms: u64) {
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(playback_ms)).await;
         let mut state = hub.state.lock().await;
@@ -3055,6 +3111,269 @@ async fn send_turn_reply(
             state.reason = "response timer elapsed".into();
         }
     });
+}
+
+/// Records one `say` delivery attempt and the "no receiver" evidence.
+async fn record_say_delivery(hub: &Hub, turn: u64, pcm_bytes: usize, sample_rate: u32) {
+    let active_body = hub.active_body.lock().await.clone();
+    {
+        let mut monitor = hub.monitor.lock().await;
+        if active_body.is_some() {
+            monitor.say_sent += 1;
+        } else {
+            monitor.say_undelivered += 1;
+        }
+        monitor.last_say = Some(SayDelivery {
+            turn,
+            pcm_bytes: pcm_bytes as u64,
+            sample_rate,
+            delivered: active_body.is_some(),
+            active_body: active_body.clone(),
+            reason: if active_body.is_some() {
+                None
+            } else {
+                Some("no active audio body")
+            },
+            at_ms: wall_ms(),
+        });
+    }
+    if active_body.is_none() {
+        hub.record_system_for_turn(
+            "tts.no_playback_receiver",
+            format!("turn={turn}; synthesized={pcm_bytes} bytes at {sample_rate} Hz; no active audio body"),
+            Some(turn),
+        )
+        .await;
+    }
+}
+
+/// Splits the reply and synthesizes segments with bounded concurrency, sending
+/// each `say` in order as soon as it is ready.
+///
+/// Returns `false` when the reply is short enough that the caller should use the
+/// single-shot path unchanged.
+async fn run_segmented_turn(hub: &Arc<Hub>, turn: u64, answer: &str) -> bool {
+    let config = hub.segments;
+    let segments = absolute_solver::segments::split_for_tts(answer, config.limits);
+    if segments.len() < 2 {
+        return false;
+    }
+    let total = segments.len();
+    let started = std::time::Instant::now();
+    let total_chars: usize = segments.iter().map(|segment| segment.chars()).sum();
+    {
+        let mut monitor = hub.monitor.lock().await;
+        monitor.tts_segments = total as u32;
+        monitor.tts_first_segment_ms = None;
+        monitor.tts_first_say_ms = None;
+    }
+    hub.record_system_for_turn(
+        "tts.segment.split",
+        format!("turn={turn}; segments={total}; chars={total_chars}"),
+        Some(turn),
+    )
+    .await;
+    if !hub
+        .set_turn_state(turn, StateName::Speaking, "segmented tts")
+        .await
+    {
+        record_stale_turn(hub, turn).await;
+        return true;
+    }
+
+    let mut ready: BTreeMap<
+        usize,
+        (
+            absolute_solver::segments::Segment,
+            Result<(Vec<u8>, u32), String>,
+        ),
+    > = BTreeMap::new();
+    let mut next_to_send = 0usize;
+    let mut sent_pcm_ms = 0u64;
+    let mut first_say_recorded = false;
+    let mut pending = futures_util::stream::iter(segments.into_iter().map(|segment| {
+        let adapters = hub.adapters.clone();
+        async move {
+            let segment_started = std::time::Instant::now();
+            let outcome = async {
+                let wav = adapters
+                    .synthesize(&segment.text)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                decode_wav_pcm16(&wav).map_err(|error| error.to_string())
+            }
+            .await;
+            (
+                segment,
+                segment_started.elapsed().as_millis() as u64,
+                outcome,
+            )
+        }
+    }))
+    .buffer_unordered(config.concurrency);
+
+    while let Some((segment, latency_ms, outcome)) = pending.next().await {
+        {
+            let mut monitor = hub.monitor.lock().await;
+            monitor.tts_last_latency_ms = Some(latency_ms);
+            monitor.tts_segment_latencies_ms.push(latency_ms);
+            if monitor.tts_segment_latencies_ms.len() > 8 {
+                monitor.tts_segment_latencies_ms.remove(0);
+            }
+            if outcome.is_ok() {
+                monitor.tts_ok += 1;
+            } else {
+                monitor.tts_errors += 1;
+            }
+            if let Ok((pcm, _)) = &outcome {
+                monitor.tts_output_bytes += pcm.len() as u64;
+            }
+            if segment.index == 0 {
+                monitor.tts_first_segment_ms = Some(latency_ms);
+            }
+        }
+        hub.record_system_for_turn(
+            if outcome.is_ok() {
+                "tts.segment.ok"
+            } else {
+                "tts.segment.error"
+            },
+            format!(
+                "turn={turn}; seq={}; chars={}; latency={latency_ms}ms{}",
+                segment.index,
+                segment.chars(),
+                match &outcome {
+                    Ok((pcm, sr)) => format!("; pcm={} bytes at {sr} Hz", pcm.len()),
+                    Err(error) => format!("; {error}"),
+                }
+            ),
+            Some(turn),
+        )
+        .await;
+        ready.insert(segment.index, (segment, outcome));
+
+        while let Some((segment, outcome)) = ready.remove(&next_to_send) {
+            if !turn_is_current(hub, turn).await {
+                record_stale_turn(hub, turn).await;
+                {
+                    let mut monitor = hub.monitor.lock().await;
+                    monitor.segments_dropped += (total - next_to_send) as u64;
+                }
+                return true;
+            }
+            match outcome {
+                Ok((pcm, sample_rate)) => {
+                    let pcm_bytes = pcm.len();
+                    let response = Message::Say {
+                        turn,
+                        seq: next_to_send as u64,
+                        pcm_b64: base64::Engine::encode(
+                            &base64::engine::general_purpose::STANDARD,
+                            &pcm,
+                        ),
+                        sr: sample_rate.max(1),
+                        mouth: absolute_solver::mouth_from_pcm(&pcm),
+                        text: segment.text.clone(),
+                        media: None,
+                        seg_total: Some(total as u32),
+                        last: Some(next_to_send + 1 == total),
+                    };
+                    record_say_delivery(hub, turn, pcm_bytes, sample_rate.max(1)).await;
+                    hub.record(
+                        "hub->body",
+                        &response,
+                        Some(turn),
+                        format!(
+                            "segment {}/{}; {} bytes; {} mouth values",
+                            next_to_send + 1,
+                            total,
+                            pcm_bytes,
+                            response.mouth_len()
+                        ),
+                    )
+                    .await;
+                    let _ = hub.outbound.send(response);
+                    {
+                        let mut monitor = hub.monitor.lock().await;
+                        monitor.segments_sent += 1;
+                        if !first_say_recorded {
+                            monitor.tts_first_say_ms = Some(started.elapsed().as_millis() as u64);
+                        }
+                    }
+                    first_say_recorded = true;
+                    sent_pcm_ms += pcm_duration_ms(pcm_bytes, sample_rate.max(1));
+                }
+                Err(error) => {
+                    // A failed first segment leaves the turn with no audio at
+                    // all: degrade the whole reply instead of speaking the rest.
+                    if next_to_send == 0 {
+                        send_turn_reply(
+                            hub.clone(),
+                            turn,
+                            answer.to_owned(),
+                            Vec::new(),
+                            16_000,
+                            true,
+                            "segmented first segment failed; subtitle only",
+                        )
+                        .await;
+                        return true;
+                    }
+                    // Keep the subtitle for this segment and continue with the
+                    // rest of the turn; the audio simply does not cover it.
+                    {
+                        let mut monitor = hub.monitor.lock().await;
+                        monitor.segments_dropped += 1;
+                    }
+                    let cue = Message::RenderCue {
+                        turn: Some(turn),
+                        kind: "subtitle".into(),
+                        text: Some(segment.text.clone()),
+                        expression: None,
+                        motion: None,
+                    };
+                    hub.record(
+                        "hub->stage",
+                        &cue,
+                        Some(turn),
+                        format!(
+                            "segment {} failed; subtitle only; {error}",
+                            next_to_send + 1
+                        ),
+                    )
+                    .await;
+                    let _ = hub.outbound.send(cue);
+                }
+            }
+            next_to_send += 1;
+        }
+    }
+
+    if next_to_send == 0 {
+        // Nothing was playable: fall back to the subtitle-only reply.
+        send_turn_reply(
+            hub.clone(),
+            turn,
+            answer.to_owned(),
+            Vec::new(),
+            16_000,
+            true,
+            "segmented tts produced no audio; subtitle only",
+        )
+        .await;
+        return true;
+    }
+    hub.record_system_for_turn(
+        "tts.segment.done",
+        format!(
+            "turn={turn}; sent={next_to_send}/{total}; first_say={}ms; audio={sent_pcm_ms}ms",
+            started.elapsed().as_millis()
+        ),
+        Some(turn),
+    )
+    .await;
+    schedule_idle_after(hub.clone(), turn, sent_pcm_ms.max(1));
+    true
 }
 
 trait MouthLen {
@@ -3124,6 +3443,8 @@ mod tests {
             mouth: Vec::new(),
             text: "hello".into(),
             media: None,
+            seg_total: None,
+            last: None,
         };
         let cue = Message::RenderCue {
             turn: Some(7),
@@ -3182,6 +3503,8 @@ mod tests {
                 mouth: vec![0.1, 0.2],
                 text: "hello".into(),
                 media: None,
+                seg_total: None,
+                last: None,
             },
             true,
         );
@@ -3232,7 +3555,9 @@ mod tests {
 
     async fn mock_tts(Json(body): Json<Value>) -> Response<Body> {
         assert!(
-            body["input"] == "模型回答" || body["input"] == "Persona 已决定说这句",
+            body["input"]
+                .as_str()
+                .is_some_and(|text| !text.trim().is_empty()),
             "unexpected TTS input: {}",
             body["input"]
         );
@@ -3267,6 +3592,13 @@ mod tests {
     }
 
     async fn test_hub(adapters: ModelAdapters) -> (Arc<Hub>, std::path::PathBuf) {
+        test_hub_with(adapters, SegmentConfig::default()).await
+    }
+
+    async fn test_hub_with(
+        adapters: ModelAdapters,
+        segments: SegmentConfig,
+    ) -> (Arc<Hub>, std::path::PathBuf) {
         static TEST_ID: AtomicU64 = AtomicU64::new(0);
         let id = TEST_ID.fetch_add(1, Ordering::Relaxed);
         let trace_path = std::env::temp_dir().join(format!(
@@ -3309,6 +3641,7 @@ mod tests {
                 memory: Arc::new(MemoryStore::open(":memory:").unwrap()),
                 listen: "127.0.0.1:18100".into(),
                 trace_path: "test-trace.jsonl".into(),
+                segments,
             }),
             trace_path,
         )
@@ -3681,6 +4014,93 @@ mod tests {
         drop(receiver);
         drop(hub);
         server.abort();
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        tokio::fs::remove_file(trace_path).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn segmented_turn_sends_ordered_says_with_segment_fields() {
+        let router = Router::new().route("/v1/audio/speech", post(mock_tts));
+        let (url, server) = mock_server(router).await;
+        let adapters = test_adapters(String::new(), url, String::new());
+        let (hub, trace_path) = test_hub_with(
+            adapters,
+            SegmentConfig {
+                enabled: true,
+                limits: absolute_solver::segments::SegmentLimits::default(),
+                concurrency: 2,
+            },
+        )
+        .await;
+        hub.state.lock().await.turn = 6;
+        let mut receiver = hub.outbound.subscribe();
+        let text = "第一句话在这里。第二句话在这里。第三句话在这里。";
+        assert!(run_segmented_turn(&hub, 6, text).await);
+
+        let mut says = Vec::new();
+        for _ in 0..3 {
+            let message = tokio::time::timeout(std::time::Duration::from_secs(2), receiver.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            let Message::Say {
+                seq,
+                seg_total,
+                last,
+                pcm_b64,
+                sr,
+                ..
+            } = message
+            else {
+                panic!("expected say segment")
+            };
+            says.push((seq, seg_total, last, pcm_b64, sr));
+        }
+        assert_eq!(
+            says.iter().map(|say| say.0).collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+        assert!(says.iter().all(|say| say.1 == Some(3)));
+        assert_eq!(says[0].2, Some(false));
+        assert_eq!(says[1].2, Some(false));
+        assert_eq!(says[2].2, Some(true));
+        assert!(says.iter().all(|say| say.4 == 32_000));
+
+        let monitor = hub.monitor.lock().await.clone();
+        assert_eq!(monitor.tts_segments, 3);
+        assert_eq!(monitor.segments_sent, 3);
+        assert_eq!(monitor.segments_dropped, 0);
+        assert!(monitor.tts_first_segment_ms.is_some());
+        assert!(monitor.tts_first_say_ms.is_some());
+        assert_eq!(monitor.tts_segment_latencies_ms.len(), 3);
+        let events = hub.events.lock().await.clone();
+        assert!(events.iter().any(|event| event.kind == "tts.segment.split"));
+        assert!(events.iter().any(|event| event.kind == "tts.segment.done"));
+        let trace = tokio::fs::read_to_string(&trace_path).await.unwrap();
+        assert!(trace.contains("tts.segment.ok"));
+        drop(events);
+        drop(receiver);
+        drop(hub);
+        server.abort();
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        tokio::fs::remove_file(trace_path).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn segmented_turn_falls_back_to_one_shot_for_a_short_reply() {
+        let (hub, trace_path) = test_hub_with(
+            test_adapters(String::new(), String::new(), String::new()),
+            SegmentConfig {
+                enabled: true,
+                limits: absolute_solver::segments::SegmentLimits::default(),
+                concurrency: 1,
+            },
+        )
+        .await;
+        hub.state.lock().await.turn = 6;
+        assert!(!run_segmented_turn(&hub, 6, "只有一句。").await);
+        assert_eq!(hub.monitor.lock().await.tts_segments, 0);
+        drop(hub);
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         tokio::fs::remove_file(trace_path).await.unwrap();
     }

@@ -2,6 +2,7 @@ pub mod adapters;
 pub mod cortico;
 pub mod memory;
 pub mod presence;
+pub mod segments;
 pub mod wire;
 
 use std::{
