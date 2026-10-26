@@ -8,7 +8,7 @@ Absolute Solver 是一个跨主机运行的实时语音协作系统：一个 Hub
 - Native TTS、分段生成与播放、首段先播、打断、active Body handoff、整轮预算和 trace 重启恢复已有代码与运行验收证据。
 - ASR Provider 与 WAV 回放链路可用；两次真实麦克风回合都只识别为“嗯”，实时语音识别仍在排查中。
 - 当前测试：`cargo fmt --check` 通过；Rust 测试 39 个库、11 个 Body、20 个 Hub 全部通过。
-- GitHub `main` 已同步到 `3e695c2`。当前没有 `v0.3.0` tag 或 GitHub Release。
+- GitHub `main` 与本地仓库同步。当前没有 `v0.3.0` tag 或 GitHub Release。
 
 测试通过不等于已发布。正式 Release 还需要补齐 ASR 实麦验收、凭据轮换与 Hub 网络边界记录、版本/构建产物校验、部署回滚和 trace 归档映射，然后创建 tag 并发布对应构建产物。
 

@@ -22,7 +22,7 @@ Absolute Solver 是跨主机运行的实时协作系统：Hub 编排回合和 Pr
 
 - GitHub：`https://github.com/zhzaill/absolute-solver`
 - 分支：`main`
-- 同步状态：本地 `main` 与 `origin/main` 一致，当前提交 `3e695c2`；工作区干净。
+- 同步状态：本地 `main` 与 `origin/main` 一致；工作区干净。
 - 当前代码版本：Cargo `0.3.0`。
 - 已提交主线：Native TTS/restart recovery、segmented TTS、interruptible bounded playback、有界 Windows 麦克风采集、协议/状态索引纠偏和当前状态手册。
 - GitHub 尚无 `v0.3.0` tag/Release；自动化测试通过，但发布验收项尚未齐备，见下方未完成事项。
