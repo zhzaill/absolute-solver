@@ -40,15 +40,15 @@ Absolute Solver 是跨主机实时协作系统：Hub 编排回合、Body 路由�
 | 120 秒整轮 TTS 预算 | accepted | `D:\11\Logs\2026-10-26-tts-turn-budget.md` |
 | Trace 撕裂行恢复 | accepted | TTS 正式验收报告 §1.3、Rust 测试 |
 | ASR Provider 与 WAV 回放 | verified | `D:\11\Logs\2026-10-26-asr-input-turn.md` |
-| ASR 实麦通路 | accepted（操作者判定，2026-10-26 23:15） | `D:\11\Logs\2026-10-26-ASR实麦诊断与录音台.md` |
+| ASR 实麦通路 | accepted（任务制定者环境豁免，2026-10-26） | 完整音频经 Hub 回合、源 WAV 直连 Provider；`D:\11\Logs\2026-10-26-asr-input-turn.md`、`D:\11\Logs\2026-10-26-ASR实麦诊断与录音台.md` |
 
-ASR 诊断结论：此前两次 Hub 实麦回合仅转写为“嗯”。本地默认耳机麦 Lenovo EH150P 为 16 kHz 单声道，但电平低且静音段占多数；内置 Realtek 阵列和两路虚拟麦在驱动层送全 0。声学回环中源 WAV 被逐字正确识别，同一音频的麦克风采集版本识别错误，故障定位到输入设备侧而非 ASR Provider/Hub。操作者将实麦通路判定为 `accepted`；人工朗读逐字一致属于后续补证，不阻塞发布判定。设备选择、实时波形/频谱和录音台工具已实现，见 `absolute-solver-mic-probe`、`absolute-solver-mic-monitor`、`录音键.cmd`。
+ASR 诊断结论：此前两次 Hub 实麦回合仅转写为“嗯”。本地默认耳机麦 Lenovo EH150P 为 16 kHz 单声道，但电平低且静音段占多数；内置 Realtek 阵列和两路虚拟麦在驱动层送全 0。声学回环中源 WAV 被逐字正确识别，同一音频的麦克风采集版本识别错误，故障定位到输入设备侧而非 ASR Provider/Hub。任务制定者因环境（耳机麦电平不足、平时不使用语音输入）免除实麦人工朗读条件；ASR 通过依据回到完整音频经 Hub 的 `audio.up` → ASR → LLM → TTS → Body 播放回合，以及源 WAV 直连 Provider 的逐字转写。设备选择、实时波形/频谱和录音台工具已实现，见 `absolute-solver-mic-probe`、`absolute-solver-mic-monitor`、`录音键.cmd`。
 
 ## 功能后续
 
 这些项目是后续工作，不要与 Release 门槛混称为“唯一主任务”：
 
-- 用 `录音键.cmd` 在可用设备上录制约 6 秒人工短句，逐字核对转写，作为 ASR 补证；当前不阻塞发布。
+- 用 `录音键.cmd` 在可用设备上录制约 6 秒人工短句，逐字核对转写，作为可选 ASR 补证；当前不阻塞发布。
 - 排查 Realtek 麦克风阵列送全 0（静音热键、Windows 输入电平、Realtek/Nahimic 驱动设置），或接入另一支可用麦克风。
 - 恢复服务器远程开机：现场检查 BIOS/NIC 的 PCIe Wake-on-LAN 设置。
 - Body 分段播放/丢弃回执尚未上报 Hub monitor；Provider 侧流式 PCM 尚未开始。
@@ -56,7 +56,7 @@ ASR 诊断结论：此前两次 Hub 实麦回合仅转写为“嗯”。本地�
 
 ## Release 阻塞项
 
-ASR 实麦已按操作者判定通过，不是当前 Release 阻塞项。创建 `v0.3.0` tag/Release 前仍需：
+ASR 实麦人工朗读条件已由任务制定者因环境免除；完整音频经 Hub 回合的历史证据已满足当前验收，不是当前 Release 阻塞项。创建 `v0.3.0` tag/Release 前仍需：
 
 1. 轮换历史日志中出现过的 Presence token 与服务器账户凭据，验证旧凭据失效，并记录 Hub 实际网络访问边界；Hub 当前无中心认证且链路未加密。
 2. 生成待发布构建并记录版本/SHA256，核验部署与回滚文件。历史文件名带 `v0.2.1`，运行代码为 `0.3.0`，不能仅凭文件名回滚。

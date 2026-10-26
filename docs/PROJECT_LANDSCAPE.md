@@ -5,7 +5,7 @@
 日期：2026-10-25
 状态：核心基础设施在线，机器人方向已接入监视器，核心协议待并入
 
-> 状态校正（2026-10-26）：本文运行快照仍保留 10-25 时点。Native TTS 和未知消息类型兼容性已由 `D:\11\Logs\2026-10-26-Absolute-Solver-TTS正式验收.md` 通过实机验收；ASR 已启动并实跑，实麦通路当晚做了完整诊断（已知文本声学回环），确认瓶颈在输入设备电平而非 Provider 或 Hub，按操作者判定收口为 accepted，见 `D:\11\Logs\2026-10-26-ASR实麦诊断与录音台.md`；人工朗读逐字一致的补证排在 2026-10-27。本文中旧的 active Body/ASR 描述不能覆盖后续报告。Presence 覆盖层和机器人运动状态不因这些报告改变。
+> 状态校正（2026-10-26）：本文运行快照仍保留 10-25 时点。Native TTS 和未知消息类型兼容性已由 `D:\11\Logs\2026-10-26-Absolute-Solver-TTS正式验收.md` 通过实机验收；ASR 实麦通路已完成设备诊断，任务制定者因环境（耳机麦电平不足、平时不使用语音输入）免除人工朗读条件，按完整音频经 Hub 回合和源 WAV 直连 Provider 逐字转写证据收口为 accepted；人工朗读仅作可选补证，详见 `D:\11\Logs\2026-10-26-asr-input-turn.md` 与 `D:\11\Logs\2026-10-26-ASR实麦诊断与录音台.md`。本文中旧的 active Body/ASR 描述不能覆盖后续报告。Presence 覆盖层和机器人运动状态不因这些报告改变。
 
 ## 结论
 
@@ -17,7 +17,7 @@ Absolute Solver 当前已经形成可运行的“一个 Mind、多种 Body、多
 - DSH 插件是操作者驾驶舱和 World 注入入口，不直接拥有运动或模型决策权。
 - Host Presence 已能在 Hub、Cortico 和本机 Host 之间走通授权流程，但覆盖层驻留仍需修复。
 - 服务器 TTS、LLM、Cortico、VLA、VM、micro-ROS、建图和 Robotics World 监视已同时在线。
-- Native TTS 输出闭环已于 2026-10-26 通过正式运行验收；ASR Provider、LLM 与实麦采集回合已运行，但两次只转写为“嗯”，真实语句识别仍未完成。详见 `D:\11\Logs\2026-10-26-asr-input-turn.md`。
+- Native TTS 输出闭环已于 2026-10-26 通过正式运行验收；ASR Provider、LLM 与完整音频经 Hub 的回放回合已验证，源 WAV 直连 Provider 逐字正确；实麦人工朗读条件由任务制定者因环境免除，详见 `D:\11\Logs\2026-10-26-asr-input-turn.md`。
 
 本轮报告是核心协议并入前的基线。用户提供的核心协议到位后，应以它为主骨架重新核对身份、事件、权限、回执和媒体边界。
 
@@ -36,7 +36,7 @@ Absolute Solver 当前已经形成可运行的“一个 Mind、多种 Body、多
 | GPT-SoVITS TTS | `E:\GPT-SoVITS` | 本地音色合成与 OpenAI 兼容网关 | `9880/18080` 在线，缓冲 WAV | 保留为 Hub Provider |
 | DSH TTS Plugin | `D:\11\Repos\dsh-tts` | 既有 TTS 工具、同源缓存、语言声明和 SSE 客户端 | 已装入 desktop profile；通过本地 `18080` 转发接 GPT-SoVITS | 保留，禁止重复实现 |
 | Qwen LLM | `E:\llm` | Persona 推理的上游模型 | `18081` 在线，Qwen3-0.6B-Q8 | 保留为模型 Provider |
-| Qwen ASR | `E:\modelsvc` | 语音转写 | `9881` 已启动；实麦回合已跑但识别质量未通过 | 排查默认输入设备、电平与端点 |
+| Qwen ASR | `E:\modelsvc` | 语音转写 | `9881` 已启动；完整音频经 Hub 回合和源 WAV 直连 Provider 已验证，实麦人工朗读条件按环境豁免 | 后续可排查默认输入设备、电平与端点 |
 | Hub 记忆 | SQLite/FTS5 | 回合记忆、检索、上限与回退 | 可用 | 保留，不上升为第二决策层 |
 | Live2D/VTS Stage | `stage/`、历史 artifacts | 早期演出探索 | 当前停用 | 归档，不作为本轮主线 |
 | gRPC 迁移 | `docs/GRPC_*`、历史评估 | 协议迁移研究 | 未采用 | 保持 WebSocket v1 |
@@ -99,7 +99,7 @@ Hub Presence intent
 - Cortico 监控：`ok=true`
 - TTS：`ok=true`
 - LLM：`ok=true`
-- ASR：Provider 已运行；实麦识别仍处于 verify
+- ASR：Provider 已运行；完整音频经 Hub 回合已验证，实麦人工朗读条件按环境豁免
 
 ### TTS
 
@@ -218,7 +218,7 @@ Adapter 监听。
 
 1. Presence 生产覆盖层仍会提前 `user_revoked`，本地生命周期审计尚未完成运行验收。
 2. 2026-10-25 快照时没有 active audio Body；2026-10-26 已通过 Native Audio Body 实际播放和 handoff 验收。
-3. ASR Provider `9881` 已启动；两次实麦回合均完成 ASR → LLM → TTS → 播放，但只识别为“嗯”，真实语句识别闭环仍未完成。
+3. ASR Provider `9881` 已启动；完整音频经 Hub 的 ASR → LLM → TTS → 播放回合已有证据，源 WAV 直连 Provider 逐字正确；实麦人工朗读条件由任务制定者因环境免除。
 4. Nav2 未启动，`navigation_ready=false`。
 5. 运动网关仍是 shadow，physical backend 不可用；自动运动未启用。
 6. 机器人纯负角速度路径仍有历史间歇问题。
