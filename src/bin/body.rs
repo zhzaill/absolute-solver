@@ -135,11 +135,17 @@ where
         let capture = tokio::task::spawn_blocking(move || capture_microphone(seconds))
             .await
             .map_err(std::io::Error::other)?;
-        let (sample_rate, pcm) = capture.map_err(std::io::Error::other)?;
+        let (sample_rate, pcm, device_name, peak_dbfs) = capture.map_err(std::io::Error::other)?;
         println!(
-            "captured {seconds}s from default microphone: {} PCM bytes at {sample_rate} Hz",
+            "captured {seconds}s from [{device_name}]: {} PCM bytes at {sample_rate} Hz, peak {peak_dbfs:.1} dBFS",
             pcm.len()
         );
+        if peak_dbfs < -45.0 {
+            eprintln!(
+                "warning: capture peak {peak_dbfs:.1} dBFS is far below speech level; ASR will probably fail. \
+                 Check the microphone mute, the input level, or set SOLVER_CAPTURE_DEVICE to another device index."
+            );
+        }
         let chunk_size = (sample_rate as usize * 2 / 10).max(2);
         for (seq, chunk) in pcm.chunks(chunk_size).enumerate() {
             let audio = Message::AudioUp {
@@ -1248,15 +1254,24 @@ fn fake_pcm(seq: u64) -> Vec<u8> {
     pcm
 }
 
-/// Captures one bounded utterance from the system default input device.
+/// Captures one bounded utterance from a selectable input device.
+/// `SOLVER_CAPTURE_DEVICE` accepts `default` or an index from `mic-probe list`.
 /// The PCM remains in memory and is discarded after the turn is sent.
 fn capture_microphone(
     seconds: u64,
-) -> Result<(u32, Vec<u8>), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(u32, Vec<u8>, String, f64), Box<dyn std::error::Error + Send + Sync>> {
     let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .ok_or("no default microphone input device")?;
+    let selector = std::env::var("SOLVER_CAPTURE_DEVICE").unwrap_or_else(|_| "default".into());
+    let device = match selector.trim() {
+        "" | "default" => host
+            .default_input_device()
+            .ok_or("no default microphone input device")?,
+        index => host
+            .input_devices()?
+            .nth(index.parse::<usize>()?)
+            .ok_or_else(|| format!("no microphone input device at index {index}"))?,
+    };
+    let device_name = device.name().unwrap_or_else(|_| "<unknown>".into());
     let config = device.default_input_config()?;
     let sample_rate = config.sample_rate().0;
     let channels = usize::from(config.channels().max(1));
@@ -1312,9 +1327,21 @@ fn capture_microphone(
     if pcm.is_empty() {
         return Err("microphone produced no PCM samples".into());
     }
+    let peak = pcm
+        .iter()
+        .map(|value| i32::from(*value).unsigned_abs())
+        .max()
+        .unwrap_or(0);
+    let peak_dbfs = if peak == 0 {
+        f64::NEG_INFINITY
+    } else {
+        20.0 * (f64::from(peak) / 32_768.0).log10()
+    };
     Ok((
         sample_rate,
         pcm.into_iter().flat_map(i16::to_le_bytes).collect(),
+        device_name,
+        peak_dbfs,
     ))
 }
 

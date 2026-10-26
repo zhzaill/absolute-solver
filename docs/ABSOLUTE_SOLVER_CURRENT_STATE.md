@@ -43,15 +43,16 @@ Absolute Solver 是跨主机运行的实时协作系统：Hub 编排回合和 Pr
 
 | Provider | 地址 | 当前结果 | 证据 |
 |---|---|---|---|
-| ASR | `127.0.0.1:9881` | HTTP 200；Qwen3-ASR `cuda`；真实麦克风两次只识别为“嗯” | `D:\11\Logs\2026-10-26-asr-input-turn.md`、服务器 `E:\modelsvc\asr_server.log` |
+| ASR | `127.0.0.1:9881` | HTTP 200；Qwen3-ASR `cuda`；源 WAV 转写逐字正确；实麦通路受设备电平限制 | `D:\11\Logs\2026-10-26-ASR实麦诊断与录音台.md`、服务器 `E:\modelsvc\asr_server.log` |
 | LLM | `127.0.0.1:18081` | `/v1/models` HTTP 200；Qwen3-0.6B-Q8_0 | 当前远程健康检查、turn 28-31 trace |
 | TTS | `127.0.0.1:18080` | `/healthz` HTTP 200；upstream alive | `D:\11\Logs\2026-10-26-Absolute-Solver-TTS正式验收.md`、当前远程健康检查 |
 
 ### Body
 
 - Native Audio Body 的完整 WAV/PCM16/active handoff/故障恢复已通过正式验收。
-- `src/bin/body.rs` 现在支持显式 `SOLVER_CAPTURE_SECONDS` 的一次性 Windows 默认麦克风采集，限制 1-30 秒、内存中分片发送、默认关闭。
-- 两次真实采集（turn 30/31）都完成 ASR → LLM → TTS → Body 播放，但 ASR 只返回“嗯”，所以 ASR 任务仍为 `verify`。
+- `src/bin/body.rs` 现在支持显式 `SOLVER_CAPTURE_SECONDS` 的一次性采集（限制 1-30 秒、内存中分片发送、默认关闭），并可用 `SOLVER_CAPTURE_DEVICE` 指定 `default` 或设备序号；采集完成后会打印设备名与峰值，峰值低于 -45 dBFS 时明确告警。
+- 两次真实采集（turn 30/31）都完成 ASR → LLM → TTS → Body 播放，但 ASR 只返回“嗯”。根因已在 2026-10-26 夜间定位到设备侧：默认输入（耳机 Lenovo EH150P，16 kHz 单声道）电平过低、静音段占多数；内置 Realtek 阵列与两路虚拟麦在驱动层送全 0。已知文本的声学回环证明 ASR Provider 与 Hub 链路无责。
+- ASR 实麦项按操作者判定记为 `accepted`（不阻塞发布）；人工朗读逐字一致的补证排在 2026-10-27。诊断工具：`absolute-solver-mic-probe`（设备与电平）、`absolute-solver-mic-monitor` + `录音键.cmd`（实时波形/频谱/录音键/设备切换）。
 - 当前没有后台麦克风采集，也没有 active Body。
 
 ## 已验收能力
@@ -65,10 +66,11 @@ Absolute Solver 是跨主机运行的实时协作系统：Hub 编排回合和 Pr
 | 120 秒分段整轮预算 | accepted | `D:\11\Logs\2026-10-26-tts-turn-budget.md` |
 | Trace 撕裂行恢复 | accepted | TTS 正式验收报告 §1.3、`src/lib.rs` 测试 |
 | ASR Provider 健康和 WAV 回放回合 | verified | `D:\11\Logs\2026-10-26-asr-input-turn.md` |
+| ASR 实麦输入通路（含设备选择） | accepted（操作者判定 2026-10-26） | `D:\11\Logs\2026-10-26-ASR实麦诊断与录音台.md` |
 
 ## 未完成和真实边界
 
-- ASR 实麦识别质量：两次真实采集均为“嗯”，需要排查默认输入设备、电平、采样和端点；不能称为语音输入闭环完成。
+- ASR 实麦识别质量：已由操作者判定收口为 `accepted`。根因是设备属性而非系统缺陷——默认耳机麦电平过低、静音段为主，内置阵列与虚拟麦送全 0；已知文本回环证明 Provider 与 Hub 链路正确。人工朗读逐字一致的补证排在 2026-10-27，不阻塞。
 - Body 侧分段播放/丢弃计数尚未上报 Hub monitor；任务卡 `docs/tasks/2026-10-26-tts-segment-receipts.md`。
 - Provider 侧流式 PCM 尚未开始；任务卡 `docs/tasks/2026-10-26-tts-streaming-pcm.md`。
 - Presence 覆盖层提前撤销仍待生命周期审计。
@@ -83,7 +85,9 @@ Absolute Solver 是跨主机运行的实时协作系统：Hub 编排回合和 Pr
 
 ## 下一项功能主任务
 
-排查 ASR 实麦仅识别为“嗯”：先确认 Windows 默认输入设备与电平，再用一条可复核短句做单 Body 采集，要求 ASR 转写与口述一致，并留下 Hub/ASR trace 与播放证据。完成前保持 `verify`。
+1. 2026-10-27 用 `录音键.cmd` 在可用设备上录一句 6 秒，确认 transcript 与口述逐字一致（补证，不阻塞）。
+2. 排查内置 Realtek 麦克风阵列送全 0：麦克风静音热键、Windows 输入电平、Realtek/Nahimic 设置，目标是让本机拥有第二路可用输入。
+3. 服务器远程开机：WoL 魔术包未唤醒，需在 BIOS/NIC 打开 PCIe 网络唤醒。
 
 ## Release 阻塞项
 

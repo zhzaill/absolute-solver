@@ -28,5 +28,13 @@ name = "absolute-solver-body"
 path = "src/bin/body.rs"
 
 [[bin]]
+name = "absolute-solver-mic-probe"
+path = "src/bin/mic_probe.rs"
+
+[[bin]]
+name = "absolute-solver-mic-monitor"
+path = "src/bin/mic_monitor.rs"
+
+[[bin]]
 name = "absolute-solver-protocol-schema"
 path = "src/bin/protocol_schema.rs"
