@@ -1,7 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::{
-    fs,
+    fs::{self, OpenOptions},
+    io::Write,
     path::PathBuf,
     sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
@@ -42,6 +43,7 @@ struct ActiveOverlay {
 
 struct HostState {
     config_path: PathBuf,
+    event_log_path: PathBuf,
     config: Mutex<HostConfig>,
     active: Mutex<Option<ActiveOverlay>>,
 }
@@ -57,6 +59,7 @@ impl HostState {
             config
         };
         Ok(Self {
+            event_log_path: config_path.with_file_name("host-events.jsonl"),
             config_path,
             config: Mutex::new(config),
             active: Mutex::new(None),
@@ -106,6 +109,36 @@ fn save_host_config(
     config.policy = policy;
     write_config(&state.config_path, &config)?;
     Ok(config.clone())
+}
+
+#[tauri::command]
+fn record_host_event(
+    event: String,
+    intent_id: Option<String>,
+    detail: String,
+    state: State<'_, HostState>,
+) -> Result<(), String> {
+    let event = event.chars().take(64).collect::<String>();
+    let intent_id = intent_id.map(|value| value.chars().take(96).collect::<String>());
+    let detail = detail
+        .replace(['\r', '\n'], " ")
+        .chars()
+        .take(512)
+        .collect::<String>();
+    let record = serde_json::json!({
+        "at_ms": wall_ms(),
+        "event": event,
+        "intent_id": intent_id,
+        "detail": detail,
+    });
+    let mut line = serde_json::to_vec(&record).map_err(|error| error.to_string())?;
+    line.push(b'\n');
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&state.event_log_path)
+        .map_err(|error| error.to_string())?;
+    file.write_all(&line).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -255,6 +288,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_host_config,
             save_host_config,
+            record_host_event,
             show_presence_overlay,
             hide_presence_overlay,
             notify_presence

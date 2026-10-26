@@ -1,9 +1,9 @@
 # TTS 分段生成（首段先播）
 
-任务 ID：tts-segmented  
-需求来源：`docs/TTS_REQUIREMENTS.md` v1.1 §9.1、§11「分段/流式 TTS：未开始」；用户 2026-10-26 指令「任务卡，同时检查 `D:\11\Repos\Amadeus` 她们当初的设计」  
-目标：把「一次文本 → 一次 TTS 请求 → 一次 `say`/`say.audio`」改为「按句切分 → 分段合成 → 首段先播 → 后续段按序补齐」，同时保持回合、顺序、打断与降级语义不变。  
-优先级：P3（体验优化）。**不得抢占 P0/P1**；本卡落地前必须由用户把状态从 `ready` 推进到 `active`。  
+任务 ID：tts-segmented
+需求来源（建卡时）：`docs/TTS_REQUIREMENTS.md` v1.1 §9.1、§11「分段/流式 TTS：未开始」；用户 2026-10-26 指令「任务卡，同时检查 `D:\11\Repos\Amadeus` 她们当初的设计」。本卡验收后，手册已回写为“分段生成已完成，流式 PCM 未开始”。
+目标：把「一次文本 → 一次 TTS 请求 → 一次 `say`/`say.audio`」改为「按句切分 → 分段合成 → 首段先播 → 后续段按序补齐」，同时保持回合、顺序、打断与降级语义不变。
+优先级：P3（体验优化）。**不得抢占 P0/P1**；本卡落地前必须由用户把状态从 `ready` 推进到 `active`。
 状态：**accepted**（2026-10-26 实现、实跑并验收；报告 `D:\11\Logs\2026-10-26-tts-segmented.md`；已知边界见 §9）
 
 ## 1. 范围
@@ -161,22 +161,22 @@ trace：`tts.segment.split`、`tts.segment.ok`、`tts.segment.error`、`tts.segm
 | 6 输出位置（正式 PCM / 诊断 WAV / 分段报告） | §3.6、§1 |
 | 7 验收目标（首段延迟 + 总时长） | §3.7、§5 |
 
-## 8. 下一步（状态推进条件）
+## 8. 状态推进记录
 
-1. 用户确认本卡后，状态置 `active`，并按 §3 顺序实现（切分纯函数 → Hub 调度 → Body 队列 → 观测 → 门控开关）。
-2. 实现完成置 `verify`，跑 §5 十条，产出 `D:\11\Logs\2026-10-26-tts-segmented.md`。
-3. 通过后置 `accepted`，并回写 `docs/TTS_REQUIREMENTS.md` §11（分段/流式状态）与 `docs/REQUIREMENTS_INDEX.md` P3 行。
+1. 2026-10-26：按 §3 完成切分纯函数、Hub 调度、Body 队列、观测和门控开关。
+2. 2026-10-26：完成 §5 十条验收，产出 `D:\11\Logs\2026-10-26-tts-segmented.md`。
+3. 2026-10-26：状态置为 `accepted`，并回写 `docs/TTS_REQUIREMENTS.md` §9.1、§11 与 `docs/REQUIREMENTS_INDEX.md` P3 行。
 
 
 ## 9. 实施结果（2026-10-26）
 
 已实现：切分（软 24/硬 48/最小 6 字符、保护 ASCII/URL/小数/反引号）、有界并发合成（默认 2）、按 `seq` 有序发送、`seg_total`/`last` 可选字段、Body 段队列（32 段上限、重复/过期/跨回合丢弃）、cpal 连续播放（替换每段 PowerShell，消除 0.9 s 段间空档）、Hub 侧段级观测、分段诊断 WAV。
 
-实跑：143 字 → 7 段；首段送达 +1,737 ms（Hub 首段合成 1,656 ms）；末段播完 +34,274 ms（音频总长 31,600 ms）；0 丢弃；听感经用户确认正常。测试 67 项全通过。
+最终实跑：166 字 → 8 段；首段实际出声 +1,780 ms（Hub 首段合成 1,656 ms）；触发至末段播完 +40,241 ms（8 段 PCM 总长 38,440 ms）；段间空档 `-1 / 0 / 2 / 0 / 2 / 0 / 0 ms`，8/8 播放、0 丢弃；听感经用户确认正常。测试 69 项全通过，`cargo fmt --check` 通过。
 
 **验收过程中修复的真实缺陷**：立体声设备下按槽位填充导致语音以 2 倍速播放（`48000 Hz / 2 ch / F32`）。修复为按交错帧消费并加回归测试。该缺陷无法被时间指标发现（播放器按名义时长睡眠），只有听感能暴露。
 
-§5 十条验收项全部通过（见报告 §2）。实跑补充了四类此前只有单元/代码路径的用例：连续播放空档（最大 2 ms）、打断（`speech.start` 后旧回合缓冲被跳过）、中途失败（第 2 段 500 → 字幕 cue，第 3 段继续）、播放中 handoff（备用 Body 从 seq=3 接管）、旧 Body 兼容（`57c0b6b` 构建的 Body 收到全部 8 段）。
+§5 十条验收项全部通过（见报告 §2）。实跑覆盖：连续播放空档（最大 2 ms）、打断（`speech.start` 后 seq 2/3 记 `skipped (superseded)`）、中途失败（第 2 段 500 → 字幕 cue，第 3 段继续）、播放中 handoff（备用 Body 从 seq=3 接管）、旧 Body 兼容（`57c0b6b` 构建的 Body 收到全部 8 段）。
 
 打断验收又暴露并修复了第二个真实缺陷：第一版只清空 Body 的 `BTreeMap`，而段已转交播放器通道，导致打断后仍继续播完缓冲；现由播放器按 `latest_turn` 跳过旧回合块。
 
@@ -184,11 +184,10 @@ trace：`tts.segment.split`、`tts.segment.ok`、`tts.segment.error`、`tts.segm
 
 | 偏差 | 现状 |
 |---|---|
-| 整轮预算 `SOLVER_TTS_TURN_BUDGET_SECONDS` | 未实现，只有每段超时 |
-| 队列 8 MiB PCM 上限 | 未实现，只有 32 段上限 |
-| handoff 续播 | 未验证：Hub 不跟踪已播段，新 active Body 可能重叠或跳段 |
-| Body 侧 played/dropped 进 monitor | 未实现：v1 无段级回执，仅在 Body trace |
-| 打断 / 中途失败 / 连续播放空档 | 只有单元与代码路径，未实跑 |
-| 旧 Body 兼容 | 未用旧二进制实跑 |
+| 打断粒度 | 正在发声的当前段不能中途切断，最多再播完一个段 |
+| Body 侧 played/dropped 进 monitor | 未实现：v1 无段级回执，仅在 Body trace；已立卡 `docs/tasks/2026-10-26-tts-segment-receipts.md` |
+| 整轮预算实跑 | 已补验：慢 Provider（35 s/段）下 `SOLVER_TTS_TURN_BUDGET_SECONDS` 默认 120 s 于 `elapsed=140,060 ms` 触发并降级 2 段，见 `docs/tasks/2026-10-26-tts-turn-budget.md` |
+| `SOLVER_TTS_SEGMENTED=0` | 兼容整段路径由既有测试覆盖，本轮未重跑实跑验收 |
+| Provider 流式 PCM | 尚未开始，已立卡 `docs/tasks/2026-10-26-tts-streaming-pcm.md` |
 
-下一步（按优先级）：① 一段 30 s 文本出声跑一次，量段间空档与总时长；② 打断与中途失败用例；③ 预算与字节上限；④ 双 Body handoff 实跑；⑤ 再考虑流式 PCM（Amadeus 侧已有 `openai_sse` 协议可对齐）。
+后续独立工作：① 慢 Provider 整轮预算已验证（`docs/tasks/2026-10-26-tts-turn-budget.md`）；② Body 侧 monitor 账目需要段级回执协议（`docs/tasks/2026-10-26-tts-segment-receipts.md`）；③ Provider 侧流式 PCM 另行立项（`docs/tasks/2026-10-26-tts-streaming-pcm.md`，Amadeus 侧 `openai_sse` 可作对齐参考）。这些工作不改变本卡 `accepted` 结论。

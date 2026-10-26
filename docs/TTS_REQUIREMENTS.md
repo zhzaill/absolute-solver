@@ -1,7 +1,7 @@
 # TTS 要求手册
 
-版本：v1.0  
-日期：2026-10-26  
+版本：v1.1
+日期：2026-10-26
 适用范围：Absolute Solver Hub、TTS Provider、Native Audio Body
 
 ## 0. 文档和输出位置
@@ -14,18 +14,34 @@
 | 需求总目录 | `D:\11\Projects\Absolute Solver\docs\REQUIREMENTS_INDEX.md` | 各领域要求、优先级和完成状态的入口 |
 | 项目推进规程 | `D:\11\Projects\Absolute Solver\docs\PROJECT_EXECUTION_METHOD.md` | 任务回收、排序、验收和归档流程 |
 | WebSocket/音频协议 | `D:\11\Projects\Absolute Solver\docs\protocol.md` | 协议字段、媒体帧和 active Body 规则以此为准 |
-| 协议补充说明 | `D:\11\Projects\Absolute Solver\docs\WIRE_PROTOCOL_V2.md` | 补充材料，不得与 `protocol.md` 形成第二套运行规范 |
+| 未采纳协议设计稿 | `D:\11\Projects\Absolute Solver\docs\WIRE_PROTOCOL_V2.md` | 仅作历史参考；运行规范以 `protocol.md`、`src/wire.rs` 和 schema 为准 |
 | gRPC 迁移条件 | `D:\11\Projects\Absolute Solver\docs\GRPC_MIGRATION_TRIGGERS.md` | 只记录触发条件和迁移决策，不代表已经迁移 |
 | 项目运行基线 | `D:\11\Projects\Absolute Solver\docs\PROJECT_LANDSCAPE.md` | 记录快照，必须标注日期，不作为实时监控 |
-| 运行验收和故障报告 | `D:\11\Logs\` | 文件名必须包含日期、组件和主题 |
+| 运行验收和故障报告 | `D:\11\Logs\` | 文件名必须是 `YYYY-MM-DD-<component>-<topic>.md`；报告必须记录实际命令、结果、限制和证据路径 |
+| TTS 诊断音频 | `D:\11\Logs\tts\` | 只有验收命令显式设置 `SOLVER_OUTPUT_WAV` 才允许写入；文件名必须带日期或回合标识 |
+| TTS Body trace | `D:\11\Logs\tts\` 或 `D:\11\Logs\asr\` | 只能记录元数据、时长、字节数和播放结果，不得写入完整 PCM/Base64 |
+| ASR 原始诊断录音 | `D:\11\Logs\asr\` | 默认不保存；只有明确授权并由命令显式指定路径时才可写入 |
+| 截图、抓包和临时产物 | `D:\11\Logs\artifacts\` | 必须在报告中引用；不能替代文字结论 |
+| 代码和测试 | `D:\11\Projects\Absolute Solver\` | 按现有源码目录放置；不得把实现写入日志目录 |
+| 任务卡 | `D:\11\Projects\Absolute Solver\docs\tasks\` | `YYYY-MM-DD-<task-id>.md` |
+| 生成 schema | `D:\11\Projects\Absolute Solver\schemas\` | 只能由 schema generator 生成，不得手工编辑 |
 | gRPC 触发后的 proto | `D:\11\Projects\Absolute Solver\proto\absolute_solver.proto` | 未触发迁移前不得创建为“已完成”产物 |
 
-生产语音的输出位置也必须固定：
+输出位置的权威规则：
 
-- 正式输出：Hub 内存中的 PCM16，发送到当前 `active Body` 的扬声器；
-- 禁止把生产音频输出到浏览器、聊天卡片或临时文件作为主链路；
-- 诊断 WAV 只有在显式设置 `SOLVER_OUTPUT_WAV` 时才落盘，路径由验收命令明确传入；
-- 诊断音频、截图和临时抓包统一放在 `D:\11\Logs\tts\`，不得写入长期记忆、trace 或仓库源码目录。
+- 正式生产输出只能是 Hub 内存中的 PCM16，发送到当前 `active Body` 的扬声器；浏览器、聊天卡片和临时文件不能替代正式输出端。
+- Provider 返回的 WAV 只能在 Hub 内存中解码；诊断 WAV 只有命令显式设置 `SOLVER_OUTPUT_WAV` 时才落盘。该路径由 Body 启动时校验（`diagnostic_wav_base`）：相对路径、仓库路径、`D:\11\Logs\tts-*` 兄弟目录和 `..` 逃逸一律拒绝启动；未设置时不得写出任何音频文件。
+- 音频 payload 不得写入仓库、长期记忆、普通 trace、monitor 快照或任务卡；报告只能引用字节数、采样率、时长、哈希和播放结果。
+- 报告、任务卡和诊断产物必须分别写入上表规定的位置；不得使用“当前目录”“桌面”或未声明的临时目录作为验收输出。
+
+### 0.1 当前状态和设计边界
+
+当前已实现并验收两种 TTS 路径：
+
+- `SOLVER_TTS_SEGMENTED=0`：兼容路径。一次文本对应一次 Provider WAV 请求、一次 WAV 解码和一次 `say`/`say.audio` 输出。
+- `SOLVER_TTS_SEGMENTED=1`：分段路径。Hub 按句切分文本，首段优先合成并发送，后续段以有界并发预生成，Body 按 `turn`/`seq` 顺序连续播放，并支持打断、失败降级、active Body handoff 和旧 Body 兼容。该路径已于 2026-10-26 实跑验收通过，证据见 `D:\11\Logs\2026-10-26-tts-segmented.md`。
+
+Provider 侧流式 PCM（例如 GPT-SoVITS 分块或 `openai_sse`）仍未开始。分段 WAV 与 Provider 流式 PCM 是两个不同能力：前者已完成，后者仍需单独定义接口、取消规则、输出位置和运行报告，不得把现有 `seq` 或 WAV 分段误称为 Provider 流式输出。
 
 ## 1. 目标
 
@@ -36,6 +52,20 @@ Hub -> TTS Provider API -> WAV -> PCM16 -> Native Audio Body -> 扬声器
 ```
 
 TTS Provider 负责文本合成，Hub 负责权限、回合、路由和可观测性，Native Audio Body 负责实际播放。
+
+兼容路径时序是：
+
+```text
+完整文本 -> 单次 TTS 请求 -> 完整 WAV 返回 -> Hub 解码 -> 单次 say.audio -> 播放
+```
+
+分段路径时序是：
+
+```text
+完整文本 -> Hub 切分 -> 首段优先/后续段有界合成 -> 按 seq 发送 say + say.audio -> Body 队列连续播放
+```
+
+兼容路径的首音频等待包含完整文本的 Provider 合成时间；分段路径的首音频等待以首段合成和发送为准。两条路径都使用 WAV 响应，二进制媒体只降低传输开销，不改变 Provider 合成模型。
 
 当前基线：TTS API 调用、WAV 解码、PCM16 输出、WebSocket 音频协议和 active Body 路由已经具备；没有 active audio Body 时，不得宣称 TTS 完整闭环完成。
 
@@ -111,7 +141,7 @@ Content-Type: application/json
 
 - `input` 使用 Hub 最终确定的回答文本；
 - 中文音色默认 `text_lang=zh`、`prompt_lang=zh`；
-- `response_format` 固定为 `wav`，直到 PCM 流式接口另行定义；
+- 当前 `response_format` 固定为 `wav`；分段路径是多个独立 WAV 请求，Provider 侧 PCM 流式接口仍未开始，不得把分段 WAV 响应当作流式输出；
 - HTTP 非 2xx 必须视为合成失败；
 - 成功响应必须经过 WAV 解码校验，不能仅依据 HTTP 200 判定成功；
 - 预期音频为单声道、PCM、16 bit，采样率以响应实际值为准；
@@ -143,6 +173,8 @@ Hub 到 Body 的正式输出使用现有协议 `docs/protocol.md`：
 
 推荐优先使用 `pcm16-binary`，保留 JSON Base64 作为兼容路径。
 
+兼容路径每个回答发送一个 `say` 和一个匹配的 `say.audio`。分段路径在同一 `turn` 下发送多个 `say`/`say.audio` 对，`seq` 为从 0 开始的段序号；可选 `seg_total` 和 `last` 用于段数与回合末段标记。旧 Body 忽略这两个可选字段后仍可接收音频。
+
 ## 5. 播放和回合要求
 
 - 第一个合格的 Speaker Body 可成为 active Body；
@@ -152,6 +184,7 @@ Hub 到 Body 的正式输出使用现有协议 `docs/protocol.md`：
 - TTS 输出为空时不得伪造音频播放状态；
 - 播放状态应由 PCM 时长估算，并在回合完成后回到 `idle`；
 - 音频 payload 不进入长期记忆、普通 trace 或监视器快照。
+- 分段路径的 Body 持有有界段队列，按 `seq` 严格顺序播放；新回合会清理旧回合未播段，过期段不得插播。兼容路径仍按完整音频单次播放。
 
 ## 6. 错误和降级
 
@@ -222,6 +255,27 @@ DSH TTS 工具和浏览器工具卡可以保留为：
 
 它们不得作为生产语音输出的验收依据，也不得替代 Native Audio Body、Hub active-body 路由或 WebSocket 音频协议。
 
+## 9.1 分段生成和流式 TTS
+
+### 当前结论
+
+分段生成已实现并通过实跑验收。任务卡为 `D:\11\Projects\Absolute Solver\docs\tasks\2026-10-26-tts-segmented.md`（`accepted`），报告为 `D:\11\Logs\2026-10-26-tts-segmented.md`。166 字文本实测切为 8 段，首段触发至实际出声 1,780 ms，触发至末段播完 40,241 ms，段间空档最大 2 ms，8/8 播放且 0 丢弃；69 项测试通过。验收同时覆盖打断、中途失败降级、播放中 handoff 和旧 Body 兼容，并修复了立体声 2 倍速与打断不清队列两个真实缺陷。
+
+
+### Provider 流式 PCM 的最低要求
+
+Provider 流式 PCM 进入实现前，任务卡必须明确以下边界：
+
+1. 文本切分规则：中文标点、最大字符数、代码/数字/缩写保护和空段丢弃；
+2. 回合字段：同一 `turn` 下的段序号、最后一段标记、取消/打断和过期段丢弃；
+3. Provider 并发：并发上限、总超时、失败后的字幕降级和不可无限重试；
+4. Body 队列：顺序播放、队列上限、当前段播放时打断、active handoff 和重复段去重；
+5. 可观测性：每段合成延迟、首段就绪延迟、总段数、播放段数和未发送段数；
+6. 输出位置：正式 PCM 仍只允许 Hub 内存和 active Body；若保存诊断 WAV，必须显式指定 `D:\11\Logs\tts\` 下的路径；流式报告必须写入 `D:\11\Logs\YYYY-MM-DD-tts-<topic>.md`；
+7. 验收目标：至少同时报告“首块可播放延迟”和“完整故事播放总时长”，不能只报告 Provider HTTP 200。
+
+在这些条件落地前，不能把 Provider 的单个 WAV 响应、现有段 `seq`、`mouth`、音频二进制帧或输入 `audio.up` 分片解释为已完成的 Provider 流式 PCM。
+
 ## 10. 完成定义
 
 当以下条件同时满足时，才可宣称 TTS 正式完成：
@@ -233,9 +287,11 @@ DSH TTS 工具和浏览器工具卡可以保留为：
 5. Provider 故障、Body 断开和无 Body 状态均有明确处理；
 6. 验收不依赖浏览器页面或自动播放策略。
 
+上述六条证明兼容完整 WAV 路径的 Native Audio Body 输出闭环；启用 `SOLVER_TTS_SEGMENTED=1` 时，还必须满足第 9.1 节的分段验收证据，才能宣称首段先播。它们不代表 Provider 侧流式 PCM 已完成；后者必须另建任务并提供独立报告。
+
 完成状态必须以代码、测试和运行报告三者同时存在为准。文档中的勾选项、历史快照或模拟 Provider 单独不能作为完成证据。
 
-2026-10-26 起，六条同时成立，且代码、测试、运行报告均已归档：本节视为满足，证据见第 12 节。
+2026-10-26 起，六条同时成立，且代码、测试、运行报告均已归档；分段路径另有独立验收报告。兼容路径和分段路径的结论均以对应开关、代码、测试和报告为准。
 
 ## 11. 与 gRPC 规划的关系
 
@@ -245,8 +301,9 @@ DSH TTS 工具和浏览器工具卡可以保留为：
 - active Body 切换：已完成；
 - Hub 重启后的完整端到端恢复：已完成（2026-10-26 实跑；同时修复撕裂 trace 行阻断启动、以及新记录粘连撕裂行尾两处缺陷）；
 - Presence 生产覆盖层反馈：部分完成，仍有提前撤销问题（不在 TTS 范围）；
-- 协议主文档：运行规范以 `docs/protocol.md` 和 `src/wire.rs` 为准；`docs/WIRE_PROTOCOL_V2.md` 是补充说明，不得形成第二套运行规范；
+- 协议主文档：运行规范以 `docs/protocol.md`、`src/wire.rs` 和 schema 为准；`docs/WIRE_PROTOCOL_V2.md` 是未采纳的历史设计稿，不得作为运行规范；
 - 未知 `type` 的宽容解析：已完成（2026-10-26；Hub 回 `protocol.error{code:"unknown_type",fatal:false}` 且连接不断，Body 记 `unknown.type` 后继续；含实跑冒烟）。
+- 分段生成（首段先播）：已完成并验收（2026-10-26，任务卡 `docs/tasks/2026-10-26-tts-segmented.md` 状态 `accepted`，报告 `D:\11\Logs\2026-10-26-tts-segmented.md`）：166 字 → 8 段，首段 1.78 s 出声、段间空档 ≤ 2 ms、总时长 40.2 s（基线 59.0 s）；打断、中途失败、播放中 handoff、旧 Body 兼容均已实跑。验收中修复了立体声 2 倍速播放与打断不清队列两个真实缺陷。仍存在的边界：打断不能切断正在发声的那一块，Body 侧段计数只在 trace；120 秒整轮预算已由慢 Provider 实跑触发并记录在 `docs/tasks/2026-10-26-tts-turn-budget.md`。流式 PCM（Provider 侧分块）仍未开始，Amadeus 的 `openai_sse` 协议可作对齐参考（`D:\11\Logs\2026-10-26-tts-segmented-design.md`）。
 
 只有 gRPC 触发条件成立后，才按 `GRPC_MIGRATION_TRIGGERS.md` 创建 proto、实现协议适配层，并在迁移报告中记录输出位置和验收证据。
 

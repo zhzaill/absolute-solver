@@ -1,6 +1,8 @@
 use std::{env, fs, path::PathBuf};
 
-use absolute_solver::wire::{HubState, WireEnvelope, PROTOCOL_NAME, PROTOCOL_VERSION};
+use absolute_solver::wire::{
+    HubState, WireEnvelope, MESSAGE_TYPES, PROTOCOL_NAME, PROTOCOL_VERSION,
+};
 use schemars::schema_for;
 
 fn write_schema<T: schemars::JsonSchema>(
@@ -23,6 +25,19 @@ fn write_wire_schema(directory: &PathBuf) -> Result<(), Box<dyn std::error::Erro
         "enum": [PROTOCOL_VERSION],
         "default": PROTOCOL_VERSION,
     });
+    value["oneOf"]
+        .as_array_mut()
+        .ok_or("wire schema oneOf must be an array")?
+        .push(serde_json::json!({
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+                "type": {
+                    "type": "string",
+                    "not": {"enum": MESSAGE_TYPES},
+                }
+            }
+        }));
     fs::write(
         directory.join("absolute-solver.wire.v1.schema.json"),
         format!("{}\n", serde_json::to_string_pretty(&value)?),

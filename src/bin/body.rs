@@ -1,5 +1,6 @@
 use std::{
-    path::{Path, PathBuf},
+    ffi::OsStr,
+    path::{Component, Path, PathBuf},
     process::Command,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -34,7 +35,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("trace/absolute-solver-body.jsonl"));
     let input_wav = std::env::var_os("SOLVER_INPUT_WAV").map(PathBuf::from);
-    let output_wav = std::env::var_os("SOLVER_OUTPUT_WAV").map(PathBuf::from);
+    let output_wav = match std::env::var_os("SOLVER_OUTPUT_WAV") {
+        Some(raw) => Some(diagnostic_wav_base(&raw)?),
+        None => None,
+    };
     let play_say = env_bool("SOLVER_PLAY_SAY");
     let listen_only = env_bool("SOLVER_BODY_LISTEN_ONLY");
     let mut capture_seconds = std::env::var("SOLVER_CAPTURE_SECONDS")
@@ -867,6 +871,47 @@ fn fulfilled(target: SayTarget, turn: u64) -> bool {
     }
 }
 
+/// The only directory diagnostics audio may be written to.
+///
+/// Production audio belongs to Hub memory and the active Body speaker; a WAV
+/// file exists only to prove that playback happened (`docs/TTS_REQUIREMENTS.md`).
+const DIAGNOSTIC_WAV_ROOT: &str = r"D:\11\Logs\tts";
+
+/// Validates `SOLVER_OUTPUT_WAV` before the first segment is synthesised.
+///
+/// Diagnostics are opt-in and may not leave `D:\11\Logs\tts\`: audio must never
+/// land in the repository, a trace directory or an arbitrary temp path.
+fn diagnostic_wav_base(raw: &OsStr) -> Result<PathBuf, String> {
+    let path = PathBuf::from(raw);
+    if !path.is_absolute() {
+        return Err(format!(
+            "SOLVER_OUTPUT_WAV must be an absolute path inside {DIAGNOSTIC_WAV_ROOT}\\ (relative paths resolve against the working directory); got {path:?}"
+        ));
+    }
+    if path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(format!(
+            "SOLVER_OUTPUT_WAV must not climb out of {DIAGNOSTIC_WAV_ROOT}\\; got {path:?}"
+        ));
+    }
+    let wanted = path_components(&path);
+    let root = path_components(Path::new(DIAGNOSTIC_WAV_ROOT));
+    if wanted.len() <= root.len() || !wanted.starts_with(&root) {
+        return Err(format!(
+            "SOLVER_OUTPUT_WAV must name a file inside {DIAGNOSTIC_WAV_ROOT}\\; got {path:?}"
+        ));
+    }
+    Ok(path)
+}
+
+fn path_components(path: &Path) -> Vec<String> {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy().to_ascii_lowercase())
+        .collect()
+}
+
 /// Writes one diagnostic WAV per segment when `SOLVER_OUTPUT_WAV` is set.
 async fn save_diagnostic_wav(base: &Path, job: &PlayJob) -> Result<(), Box<dyn std::error::Error>> {
     let stem = base
@@ -1025,9 +1070,37 @@ fn play_wav(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{drain_into_f32, resample_linear, send_input_samples};
+    use super::{diagnostic_wav_base, drain_into_f32, resample_linear, send_input_samples};
     use std::collections::VecDeque;
+    use std::ffi::OsStr;
     use std::sync::{mpsc, Arc, Mutex};
+
+    #[test]
+    fn diagnostic_wav_stays_inside_the_logs_root() {
+        // The diagnostic directory itself is accepted, case-insensitively.
+        assert!(diagnostic_wav_base(OsStr::new(r"D:\11\Logs\tts\turn-1.wav")).is_ok());
+        assert!(diagnostic_wav_base(OsStr::new(r"d:\11\logs\TTS\turn-1.wav")).is_ok());
+        assert!(diagnostic_wav_base(OsStr::new(r"D:\11\Logs\tts\2026-10-26\run-a.wav")).is_ok());
+        // A relative path resolves against the working directory, which is the
+        // repository during acceptance runs.
+        assert!(diagnostic_wav_base(OsStr::new(r"turn-1.wav")).is_err());
+        assert!(diagnostic_wav_base(OsStr::new(r"trace\turn-1.wav")).is_err());
+        // The repository and every other directory stay off limits.
+        assert!(
+            diagnostic_wav_base(OsStr::new(r"D:\11\Projects\Absolute Solver\turn-1.wav")).is_err()
+        );
+        assert!(diagnostic_wav_base(OsStr::new(r"D:\11\Logs\turn-1.wav")).is_err());
+        assert!(diagnostic_wav_base(OsStr::new(r"C:\Windows\Temp\turn-1.wav")).is_err());
+        // A sibling that only shares the prefix is not inside the root.
+        assert!(diagnostic_wav_base(OsStr::new(r"D:\11\Logs\tts-backup\turn-1.wav")).is_err());
+        // The root is a directory, not a file base.
+        assert!(diagnostic_wav_base(OsStr::new(r"D:\11\Logs\tts")).is_err());
+        assert!(diagnostic_wav_base(OsStr::new(r"D:\11\Logs\tts\")).is_err());
+        // No lexical climb back out of the root.
+        assert!(
+            diagnostic_wav_base(OsStr::new(r"D:\11\Logs\tts\..\..\Projects\turn-1.wav")).is_err()
+        );
+    }
 
     #[test]
     fn microphone_samples_downmix_stereo_to_mono() {

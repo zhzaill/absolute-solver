@@ -28,6 +28,8 @@ function setOverlay(active, reason = '') {
 
 async function hide(intentId, sendRevoke = true, reason = 'user_revoked') {
   if (!state.active || state.active.intentId !== intentId) return;
+  const detail = `reason=${reason}; ws=${state.socket?.readyState ?? 'none'}; visibility=${document.visibilityState}; focus=${document.hasFocus()}; active=${document.activeElement?.id || 'none'}`;
+  invoke('record_host_event', { event: 'presence.hide', intentId, detail }).catch(() => {});
   if (sendRevoke) {
     send({ type: 'presence.revoke', intent_id: intentId, host_id: state.config.hostId, reason });
   }
@@ -161,8 +163,17 @@ $('save').addEventListener('click', async () => {
   } catch (error) { $('activity-detail').textContent = `保存失败：${error}`; }
 });
 
-$('revoke').addEventListener('click', () => state.active && hide(state.active.intentId, true));
-listen('host:revoke-request', () => state.active && hide(state.active.intentId, true, 'tray_revoked'));
+$('revoke').addEventListener('click', (event) => {
+  if (!state.active) return;
+  const detail = `source=button; trusted=${event.isTrusted}; x=${event.clientX}; y=${event.clientY}`;
+  invoke('record_host_event', { event: 'presence.revoke-input', intentId: state.active.intentId, detail }).catch(() => {});
+  hide(state.active.intentId, true);
+});
+listen('host:revoke-request', () => {
+  if (!state.active) return;
+  invoke('record_host_event', { event: 'presence.revoke-input', intentId: state.active.intentId, detail: 'source=tray' }).catch(() => {});
+  hide(state.active.intentId, true, 'tray_revoked');
+});
 load().catch((error) => status(`启动失败：${error}`, 'bad'));
 
 // Matrix rain effect

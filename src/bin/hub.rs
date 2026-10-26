@@ -3438,11 +3438,16 @@ async fn run_segmented_turn(hub: &Arc<Hub>, turn: u64, answer: &str) -> bool {
         .await;
         return true;
     }
+    // `elapsed` is the whole turn; `first_say` is when the first segment left
+    // for the Body. Labelling both as "first_say" made a budget-degraded turn
+    // look like it had taken 140 s to start speaking.
+    let first_say_ms = hub.monitor.lock().await.tts_first_say_ms;
     hub.record_system_for_turn(
         "tts.segment.done",
         format!(
-            "turn={turn}; audio_segments={sent_segments}/{total}; first_say={}ms; audio={sent_pcm_ms}ms",
-            started.elapsed().as_millis()
+            "turn={turn}; audio_segments={sent_segments}/{total}; elapsed={}ms; first_say={}; audio={sent_pcm_ms}ms",
+            started.elapsed().as_millis(),
+            first_say_ms.map_or_else(|| "-".to_owned(), |ms| format!("{ms}ms"))
         ),
         Some(turn),
     )
