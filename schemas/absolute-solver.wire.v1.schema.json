@@ -431,6 +431,34 @@
         "type"
       ],
       "type": "object"
+    },
+    {
+      "properties": {
+        "type": {
+          "not": {
+            "enum": [
+              "hello",
+              "audio.up",
+              "say",
+              "speech.start",
+              "speech.end",
+              "render.cue",
+              "body.handoff",
+              "presence.intent",
+              "presence.decision",
+              "presence.grant",
+              "presence.revoke",
+              "turn.started",
+              "protocol.error"
+            ]
+          },
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
     }
   ],
   "properties": {
