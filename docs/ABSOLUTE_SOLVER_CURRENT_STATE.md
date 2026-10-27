@@ -16,8 +16,8 @@ Absolute Solver 是跨主机实时协作系统：Hub 编排回合、Body 路由�
 ## 仓库快照
 
 - 仓库：`https://github.com/zhzaill/absolute-solver`，分支 `main`。
-- 应用版本：Cargo `0.3.0`；GitHub 尚无 `v0.3.0` tag/Release。当前仓库快照提交为 `df68252`。
-- 本次生产验收基于 `df68252`；以下运行快照和文档状态已按验收证据更新。
+- 应用版本：Cargo `0.3.0`；GitHub 尚无 `v0.3.0` tag/Release。协作基线文档基于 `af63fad`。
+- 生产 Body 验收基于 `df68252`；Cortico 协作基线则基于 `af63fad`，对应运行快照已按各自证据记录。
 - 最新 CI 的格式、测试、schema 生成和 schema 差异检查全部通过；任务 A 的 Rust 测试为 42 个库、12 个 Body、23 个 Hub。
 
 ## 运行快照
@@ -41,6 +41,7 @@ Absolute Solver 是跨主机实时协作系统：Hub 编排回合、Body 路由�
 | 120 秒整轮 TTS 预算 | accepted | `D:\11\Logs\2026-10-26-tts-turn-budget.md` |
 | Trace 撕裂行恢复 | accepted | TTS 正式验收报告 §1.3、Rust 测试 |
 | TTS 段级回执 | accepted；生产正常分段与 Body 队列打断均已实跑验收 | `D:\11\Logs\2026-10-27-tts-segment-receipts.md`、`D:\11\Logs\2026-10-27-tts-segment-receipts-production-deploy.md`、`D:\11\Logs\2026-10-27-tts-segment-receipts-body-production.md` |
+| Cortico 协作边界 | 架构职责已明确；生产量化 blocked（Cortico 不可达，尚无可关联的自然事件样本） | `docs/tasks/2026-10-27-cortico-collaboration-metrics.md`、`D:\11\Logs\2026-10-27-cortico-collaboration-baseline.md` |
 | Provider 流式 PCM | blocked（已完成可行性测量） | `D:\11\Logs\2026-10-27-tts-streaming-pcm-可行性判定.md`；网关缓冲整段响应 |
 | ASR Provider 与 WAV 回放 | verified | `D:\11\Logs\2026-10-26-asr-input-turn.md` |
 | ASR 实麦通路 | accepted（任务制定者环境豁免，2026-10-26） | 完整音频经 Hub 回合、源 WAV 直连 Provider；`D:\11\Logs\2026-10-26-asr-input-turn.md`、`D:\11\Logs\2026-10-26-ASR实麦诊断与录音台.md` |
@@ -57,6 +58,7 @@ ASR 诊断结论：此前两次 Hub 实麦回合仅转写为“嗯”。本地�
 - 生产 Body 已接入并完成正常分段、打断回执验收；任务卡 `docs/tasks/2026-10-26-tts-segment-receipts.md` 的端到端范围已 accepted。生产 Body 是本机常驻客户端实例，Hub 仍运行在服务器计划任务中。
 - Provider 侧流式 PCM 已测量但 blocked：直连 Provider 真流式，经网关变成整段缓冲；解除步骤见 `docs/tasks/2026-10-26-tts-streaming-pcm.md` 和可行性报告。
 - Presence 覆盖层提前撤销仍待生命周期审计；机器人 Nav2/实体运动未验收。
+- Cortico `/api/status`、`/api/usage`、`/api/log` 生产探针当前失败，本机 `127.0.0.1:7777` 连接被拒绝；生产协作延迟/覆盖率尚未测量。恢复后按 `docs/tasks/2026-10-27-cortico-collaboration-metrics.md` 完成标注事件测量。
 
 ## Release 阻塞项
 

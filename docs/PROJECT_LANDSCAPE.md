@@ -78,6 +78,8 @@ Hub Presence intent
   -> TTL grant / revoke
 ```
 
+Cortico/Hub 的权责和测量边界以 `docs/ABSOLUTE_SOLVER_CURRENT_STATE.md`、`docs/tasks/2026-10-27-cortico-collaboration-metrics.md` 为准：World `pushEvent` 保存/投递不等于 Persona 已处理；Persona 可响应、调用工具或保持沉默；Hub 接受 expression（HTTP 202）不等于 Body 已播放。2026-10-27 Cortico 不可达，生产协作可用率及事件到 Persona 决策延迟未测量。历史 TTS 报告只证明 Hub expression ingress 到 Body 播放，不证明 Cortico 当时在线。
+
 当前有两个机器人事实出口，但用途已分开：
 
 - DSH `injectWorld` 是 Persona 的事实入口。
@@ -96,7 +98,7 @@ Hub Presence intent
 - 连接错误：`0`
 - 协议错误：`0`
 - 监视器页面：HTTP `200`
-- Cortico 监控：`ok=true`
+- Cortico 监控：2026-10-27 当前探针 `ok=false`；`127.0.0.1:7777` 的 `/api/status`、`/api/usage`、`/api/log` 均连接失败。上面旧快照中的 `ok=true` 仅代表历史运行时点，不能覆盖当前证据。
 - TTS：`ok=true`
 - LLM：`ok=true`
 - ASR：Provider 已运行；完整音频经 Hub 回合已验证，实麦人工朗读条件按环境豁免
