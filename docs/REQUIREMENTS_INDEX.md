@@ -63,7 +63,7 @@
 | 领域 | 主文档 | 当前状态 | 触发条件 |
 |---|---|---|---|
 | gRPC 迁移 | `docs/GRPC_MIGRATION_TRIGGERS.md` | 未开始，按决策延期 | 第三个非 Rust Body、外部开发者接入、兼容性维护超过 2 小时/周，任一成立才启动 |
-| 分段/流式 TTS | `docs/TTS_REQUIREMENTS.md` | 分段生成与段级回执均 accepted；回执 Hub 字段已于 2026-10-27 部署，生产 Body 端待更新；Provider 流式 PCM 已测量但 blocked：网关将上游分块缓冲为整段响应 | 先修复网关透传并复测，再推进独立的 Hub/Body 段内流式协议和首块延迟验收 |
+| 分段/流式 TTS | `docs/TTS_REQUIREMENTS.md` | 分段生成、段级回执及生产 Body 正常播放/打断回执均 accepted（2026-10-27）；Provider 流式 PCM 已测量但 blocked：网关将上游分块缓冲为整段响应 | 先修复网关透传并复测，再推进独立的 Hub/Body 段内流式协议和首块延迟验收 |
 | Nav2/自动运动 | `docs/integrations/xuegeros.md` | 未完成 | physical backend、导航安全和人工确认链路全部可验收 |
 
 ## 3. 固定输出位置
