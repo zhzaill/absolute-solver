@@ -39,6 +39,7 @@
 - Provider WAV 可由 Hub 解码为 PCM16，通过二进制 `say.audio` 发给 active Native Audio Body；已在真实扬声器听音确认。
 - 正式链路分别记录 Provider 生成、Hub 解码/发送、Body 收到、播放器实际结果；无 active Body 时允许合成成功但明确记未投递，不得报告播放成功。
 - 分段 TTS 采用文本边界切分、有界并发、按 seq 顺序播放、超时/失败字幕降级。已有真实验收显示首段先播显著早于整段等待，段间播放连续。
+- TTS Provider 于 2026-10-27 降级为局域网 OpenAI 远程服务（`0.0.0.0:18080`，`sk-` 客户端密钥 + 独立管理员口令 + 浏览器配置界面）；Hub 只认远程 OpenAI 端点。**分句、并发、回执、预算四条链路未改动**，切分后每段仍是一次独立 WAV 请求。
 - 120 秒默认整轮预算曾在慢 Provider 实跑触发；该预算在某段返回时检查，并非独立定时器。Provider 永不返回时靠单段 timeout，不可把两种时限混为一谈。
 - Body 段级回执已生产验收。Hub 估算的 dropped 与 Body 报告的 played/skipped 可能不同；只有 Body 视角能陈述实际播放事实。回执仅观测，不控制回合；重复回执需幂等。
 - Trace 撕裂行恢复已实现：保留原坏行、跳过不可解析记录、追加恢复事件；不静默清洗历史证据。
@@ -52,6 +53,7 @@
 | 一次性 Body 播完第一段就退出 | 退出条件没有贯穿最后段标记；现在 `say.last` 一路传至播放事件，最后一段播放完成后才退出 | 多段 WAV 回放/实麦路径核对每段均收到且回执发完 |
 | Hub `segments_dropped` 与 Body 实际 skipped 不同 | Hub 只根据名义时长估算，无法知道播放线程已经接收了哪些段 | 对同一 turn 按 seq 对账 Hub sent 与 Body receipt，不要用累计 monitor 数替代逐回合数据 |
 | 上游支持流式但网关返回整段 | 网关用非流式 `requests.post` 收完整响应再一次性构造 Response | 记录首块、总时长、块分布；HTTP 200 或多个 TCP chunks 不能单独证明真流式 |
+| 分段回合偶发丢段，错误写"上游未运行" | 合成前先探 `/docs`（2 s 超时）当门禁；并发合成时该探针超时，整段被误判 503（实测 5 段丢 1 段）。改为：探活只用于展示，合成直接打上游并按连接错误/超时分类（503/504） | 跑 ≥5 段的长文本连续两轮，要求 `segments_sent == tts_segments`、`dropped=0`；探活返回值不得作为拒绝合成的唯一依据 |
 
 ### TTS 不可混淆的几种能力
 
@@ -137,6 +139,7 @@
 - 生产 Hub 部署：[2026-10-27-tts-segment-receipts-production-deploy.md](D:/11/Logs/2026-10-27-tts-segment-receipts-production-deploy.md)
 - 生产 Body 正常/打断验收：[2026-10-27-tts-segment-receipts-body-production.md](D:/11/Logs/2026-10-27-tts-segment-receipts-body-production.md)
 - 流式阻塞测量：[2026-10-27-tts-streaming-pcm-可行性判定.md](D:/11/Logs/2026-10-27-tts-streaming-pcm-可行性判定.md)
+- Provider 降级为局域网 OpenAI 服务（含探活误判修复）：[2026-10-27-tts-openai-remote-service.md](D:/11/Logs/2026-10-27-tts-openai-remote-service.md)
 
 ### ASR 与运行调试
 
