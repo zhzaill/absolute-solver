@@ -4,7 +4,7 @@
 需求来源：用户要求固化并量化 Absolute Solver 与 Cortico 的协作模式；主要服务将依赖 Cortico。  
 目标：定义并实测 World 事实进入 Cortico、Persona 决策表达、Hub 执行以及 Body 回执的端到端指标。  
 优先级：P1（核心协作边界与运行可观测性）  
-状态：**blocked（生产测量）**；协作边界和指标草案见 `D:\11\Logs\2026-10-27-cortico-collaboration-baseline.md`。
+状态：**active（服务已恢复，生产协作测量未验收）**；协作边界和指标草案见 `D:\11\Logs\2026-10-27-cortico-collaboration-baseline.md`，运行调试记录见 `D:\11\Logs\2026-10-27-cortico-runtime-debug.md`。
 
 ## 范围
 
@@ -61,9 +61,9 @@ Cortico 持有 Persona 决策和 World 语义；Hub 持有 session/turn、权限
 
 ## 当前阻塞与下一步
 
-2026-10-27 生产 Hub 的 Cortico `/api/status`、`/api/usage`、`/api/log` 均连接失败，本机 `127.0.0.1:7777` 拒绝连接。Hub 仍在线，但当前没有可用 Cortico 实例可做生产协作测量。历史 TTS 端到端报告明确记录 Cortico 未启动，不能作为 Cortico 决策链证据。
+2026-10-27 早些时候生产 Hub 的 Cortico `/api/status`、`/api/usage`、`/api/log` 均连接失败，本机 `127.0.0.1:7777` 拒绝连接。2026-10-27 20:02（Asia/Shanghai）复查时，服务器计划任务 `Absolute-Solver-Cortico` 已运行，Cortico v0.2.7 在 `127.0.0.1:7777` 返回 ready；账本损坏行已备份并移除，错误日志为空。服务可用不等于协作测量完成：目前没有新的、可关联的 World 输入到 Persona 决策/表达/Body 回执样本。历史 TTS 端到端报告明确记录 Cortico 当时未启动，不能作为 Cortico 决策链证据。
 
-解除阻塞后：部署/唤醒 Cortico；对齐可审计的 `correlation_id`（贯穿 World event、Persona 决策/表达、Hub turn 和 Body receipt）；执行 30 条标注样本和故障场景；将真实分布写入 Logs；据结果校准 SLO。
+当前步骤：先完成 Cortico/本地 LLM 运行稳定性观察，并设计隔离、可关联的 World 输入样本；在不向生产 Persona 注入验收事件的前提下，取得用户批准或建立隔离实例后，再对齐可审计的 `correlation_id`（贯穿 World event、Persona 决策/表达、Hub turn 和 Body receipt），执行 30 条标注样本和故障场景，将真实分布写入 Logs 并据结果校准 SLO。
 
 ## 输出与安全
 

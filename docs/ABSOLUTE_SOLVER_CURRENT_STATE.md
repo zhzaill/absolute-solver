@@ -29,7 +29,7 @@ Absolute Solver 是跨主机实时协作系统：Hub 编排回合、Body 路由�
 | Provider | 地址 | 最近证据 | 状态 |
 |---|---|---|---|
 | ASR | `127.0.0.1:9881` | HTTP 200；Qwen3-ASR CUDA；源 WAV 转写逐字正确 | Provider/WAV 路径 verified |
-| LLM | `127.0.0.1:18081` | `/v1/models` HTTP 200；Qwen3-0.6B-Q8_0 | 最近健康检查通过 |
+| LLM | `127.0.0.1:18081` | `/health` HTTP 200；`/props` 报告 `n_ctx=8192`；短英文指令返回 `PASS`（2 tokens / 706 ms） | 服务可用；0.6B 长上下文回答质量与显存竞争仍待稳定性验证 |
 | TTS | `127.0.0.1:18080` | `/healthz` HTTP 200；upstream alive | 正式 TTS 验收通过 |
 
 ## 能力状态
@@ -41,7 +41,7 @@ Absolute Solver 是跨主机实时协作系统：Hub 编排回合、Body 路由�
 | 120 秒整轮 TTS 预算 | accepted | `D:\11\Logs\2026-10-26-tts-turn-budget.md` |
 | Trace 撕裂行恢复 | accepted | TTS 正式验收报告 §1.3、Rust 测试 |
 | TTS 段级回执 | accepted；生产正常分段与 Body 队列打断均已实跑验收 | `D:\11\Logs\2026-10-27-tts-segment-receipts.md`、`D:\11\Logs\2026-10-27-tts-segment-receipts-production-deploy.md`、`D:\11\Logs\2026-10-27-tts-segment-receipts-body-production.md` |
-| Cortico 协作边界 | 架构职责已明确；生产量化 blocked（Cortico 不可达，尚无可关联的自然事件样本） | `docs/tasks/2026-10-27-cortico-collaboration-metrics.md`、`D:\11\Logs\2026-10-27-cortico-collaboration-baseline.md` |
+| Cortico 协作边界 | 架构职责已明确；服务已恢复、运行调试中；生产量化未验收（尚无可关联的自然事件样本） | `docs/tasks/2026-10-27-cortico-collaboration-metrics.md`、`D:\11\Logs\2026-10-27-cortico-collaboration-baseline.md`、`D:\11\Logs\2026-10-27-cortico-runtime-debug.md` |
 | Provider 流式 PCM | blocked（已完成可行性测量） | `D:\11\Logs\2026-10-27-tts-streaming-pcm-可行性判定.md`；网关缓冲整段响应 |
 | ASR Provider 与 WAV 回放 | verified | `D:\11\Logs\2026-10-26-asr-input-turn.md` |
 | ASR 实麦通路 | accepted（任务制定者环境豁免，2026-10-26） | 完整音频经 Hub 回合、源 WAV 直连 Provider；`D:\11\Logs\2026-10-26-asr-input-turn.md`、`D:\11\Logs\2026-10-26-ASR实麦诊断与录音台.md` |
@@ -58,7 +58,7 @@ ASR 诊断结论：此前两次 Hub 实麦回合仅转写为“嗯”。本地�
 - 生产 Body 已接入并完成正常分段、打断回执验收；任务卡 `docs/tasks/2026-10-26-tts-segment-receipts.md` 的端到端范围已 accepted。生产 Body 是本机常驻客户端实例，Hub 仍运行在服务器计划任务中。
 - Provider 侧流式 PCM 已测量但 blocked：直连 Provider 真流式，经网关变成整段缓冲；解除步骤见 `docs/tasks/2026-10-26-tts-streaming-pcm.md` 和可行性报告。
 - Presence 覆盖层提前撤销仍待生命周期审计；机器人 Nav2/实体运动未验收。
-- Cortico `/api/status`、`/api/usage`、`/api/log` 生产探针当前失败，本机 `127.0.0.1:7777` 连接被拒绝；生产协作延迟/覆盖率尚未测量。恢复后按 `docs/tasks/2026-10-27-cortico-collaboration-metrics.md` 完成标注事件测量。
+- Cortico `v0.2.7` 计划任务当前运行，服务器本机 `127.0.0.1:7777/api/status` ready，`/api/log?level=error` 返回空数组；usage 账本原损坏行已留备份并清理。上下文设为 8192，Provider 配置现为 `maxTokens=256`、`temperature=0.2`；当前上下文计数曾达 7817/7936，显存 8108/8192 MiB，故没有增大 llama-server 上下文。生产协作延迟/覆盖率尚未测量；运行细节见 `D:\11\Logs\2026-10-27-cortico-runtime-debug.md`，后续按 `docs/tasks/2026-10-27-cortico-collaboration-metrics.md` 完成隔离标注样本测量。
 
 ## Release 阻塞项
 
