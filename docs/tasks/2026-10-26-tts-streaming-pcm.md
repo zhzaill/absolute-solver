@@ -4,7 +4,7 @@
 需求来源（建卡时）：用户 2026-10-26 指令「另立任务实现 Provider 侧流式 PCM，例如 GPT-SoVITS 分块或 `openai_sse`」；`docs/TTS_REQUIREMENTS.md` §9.1「Provider 流式 PCM 的最低要求」。
 目标：把"Provider 一次返回整段 WAV"改为"Provider 边合成边吐 PCM 块"，让首块音频的等待时间由**首块合成时间**决定，而不是整段合成时间。
 优先级：P3（体验优化；不得抢占 P0/P1）。
-状态：**planned**（未开始；未写代码、未改协议、未接任何 Provider 的流式接口）
+状态：**planned（blocked，2026-10-27 已定位阻塞点）** —— 上游 Provider 支持真分块，但线上 TTS 网关 `E:\GPT-SoVITS\gateway\gateway.py` 缓冲整段后一次性返回，实测首块/总时长 0.998、末 100 ms 内 7/7 块，判定为假流式；网关不在本卡允许修改范围内。证据与解除步骤见 `D:\11\Logs\2026-10-27-tts-streaming-pcm-可行性判定.md`，测量工具 `tools/tts-stream-probe.mjs`。
 
 ## 1. 与已完成能力的分界（本卡存在的理由）
 
