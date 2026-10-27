@@ -1,16 +1,17 @@
-# North Star And Integration Rules
+# Absolute Solver 目标与集成规则
 
 ## What We Want
 
-Absolute Solver exists so one continuous mind can think on a server and appear through many small bodies.
+Absolute Solver is a private runtime for one operator. Its current goal is to make Cortico, the Hub, model providers, and one native audio Body work together reliably on a trusted local network.
 
-The product outcome is:
+The core outcome is:
 
-- one identity and one memory stream;
-- many bodies with different capabilities;
-- thin devices that can capture, play, display, and interrupt without running the full AI stack;
-- explicit, temporary, revocable host presence;
-- a stable protocol that lets new worlds, tools, models, and devices integrate without redefining the core.
+- one Persona decision owner and one Hub runtime authority;
+- a verifiable path from audio input through ASR/LLM/TTS to local playback;
+- permissions, failure handling, and trace records that make the private runtime understandable and recoverable;
+- adapters that keep future integrations possible without making them current product commitments.
+
+Multiple Bodies, robotics, VLA, desktop agents, external developer APIs, and a public platform are optional experiments. They enter the active scope only when the operator has a concrete use for them.
 
 ## Invariants
 
@@ -45,7 +46,7 @@ If a proposed project does not fit one of these surfaces, first define the missi
 
 ## Borrow Before Building
 
-Prefer proven GitHub projects and standards for commodity layers:
+Prefer proven existing projects and standards for commodity layers:
 
 - WebSocket/WebRTC and media transport;
 - VAD and audio processing;
@@ -63,7 +64,7 @@ Before adopting a large external project, answer:
 
 1. Which existing surface does it replace or strengthen?
 2. Which state owner changes?
-3. Does it preserve one mind, many bodies, and one active output?
+3. Does it preserve one Persona decision owner and one active output path?
 4. What happens when it is offline, slow, compromised, or partially configured?
 5. What data leaves the host, and under whose permission?
 6. Does it reduce total integration work or only move complexity?
@@ -84,4 +85,4 @@ Until those answers are clear, keep the project in an experimental integration p
 
 A change is aligned only if the result can be stated as:
 
-> The same mind gains a new capability through a bounded adapter, while Hub ownership, host permissions, active-body routing, protocol versioning, and logging continuity remain intact.
+> The private runtime gains a needed capability through a bounded adapter, while Hub ownership, host permissions, active-body routing, protocol versioning, and logging continuity remain intact.

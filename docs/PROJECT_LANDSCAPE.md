@@ -2,6 +2,8 @@
 
 当前可信状态手册：`docs/ABSOLUTE_SOLVER_CURRENT_STATE.md`；对应运行报告：`D:\11\Logs\2026-10-26-Absolute-Solver-当前可信状态.md`。本文保留为历史快照和架构背景，不作为实时状态源。
 
+> 定位校正（2026-10-27）：Absolute Solver 是个人私有运行时，不以通用多 Body/机器人平台为当前交付目标。下方项目清单保留历史接入和实验背景；当前必须维持的核心范围以 `docs/ABSOLUTE_SOLVER_CURRENT_STATE.md` 的“当前功能定位”为准。
+
 日期：2026-10-25
 状态：核心基础设施在线，机器人方向已接入监视器，核心协议待并入
 
@@ -226,7 +228,7 @@ Adapter 监听。
 6. 机器人纯负角速度路径仍有历史间歇问题。
 7. Guest DHCP 是短租约，NetworkManager 仍损坏。
 8. Coo 未完成交互桌面首启与 CUA 安全行为验收。
-9. GitHub 尚无 `v0.3.0` tag/Release。
+9. 远程仓库为私有仓库；当前没有对外 `v0.3.0` tag/Release 目标。
 10. 两个仓库都有未提交改动，当前状态是运行验证版，不是发布提交。
 
 历史连续性说明：2026-10-23 Presence 部署报告记录生产 turn=41；2026-10-26 TTS 重启恢复报告记录 turn=18 且从 `E:\Absolute-Solver\trace\absolute-solver-v0.2.1.jsonl` 恢复。两者不能拼成一条连续 turn 序列，说明期间 trace 被替换或归档；后续发布必须保存 trace 归档映射。

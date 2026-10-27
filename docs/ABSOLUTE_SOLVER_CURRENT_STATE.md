@@ -15,10 +15,16 @@ Absolute Solver 是跨主机实时协作系统：Hub 编排回合、Body 路由�
 
 ## 仓库快照
 
-- 仓库：`https://github.com/zhzaill/absolute-solver`，分支 `main`。
-- 应用版本：Cargo `0.3.0`；GitHub 尚无 `v0.3.0` tag/Release。协作基线文档基于 `af63fad`。
+- 仓库：私有远程 Git 仓库 `https://github.com/zhzaill/absolute-solver`，分支 `main`。
+- 应用版本：Cargo `0.3.0`；当前没有对外发布目标，也没有 `v0.3.0` Release。协作基线文档基于 `af63fad`。
 - 生产 Body 验收基于 `df68252`；Cortico 协作基线则基于 `af63fad`，对应运行快照已按各自证据记录。
 - 最新 CI 的格式、测试、schema 生成和 schema 差异检查全部通过；任务 A 的 Rust 测试为 42 个库、12 个 Body、23 个 Hub。
+
+## 当前功能定位
+
+Absolute Solver 当前是个人私有运行时，不是面向外部用户的通用平台。必须持续可用的核心只有：Cortico Persona、Hub 回合与权限、ASR/LLM/TTS Provider、一个可验收的音频 Body，以及可追溯的 trace/monitor。
+
+多 Body、机器人/XuegerOS、VLA、桌面 CUA、面板、Provider 流式 PCM、gRPC 和公开 SDK 都属于可选扩展或实验路线；它们不能反过来扩大当前发布范围，也不应成为核心验收的前置条件。
 
 ## 运行快照
 
@@ -58,17 +64,17 @@ ASR 诊断结论：此前两次 Hub 实麦回合仅转写为“嗯”。本地�
 - 生产 Body 已接入并完成正常分段、打断回执验收；任务卡 `docs/tasks/2026-10-26-tts-segment-receipts.md` 的端到端范围已 accepted。生产 Body 是本机常驻客户端实例，Hub 仍运行在服务器计划任务中。
 - Provider 侧流式 PCM 已测量但 blocked：直连 Provider 真流式，经网关变成整段缓冲；解除步骤见 `docs/tasks/2026-10-26-tts-streaming-pcm.md` 和可行性报告。
 - Presence 覆盖层提前撤销仍待生命周期审计；机器人 Nav2/实体运动未验收。
-- Cortico `v0.2.7` 计划任务当前运行，服务器本机 `127.0.0.1:7777/api/status` ready，`/api/log?level=error` 返回空数组；usage 账本原损坏行已留备份并清理。上下文设为 8192，Provider 配置现为 `maxTokens=256`、`temperature=0.2`；当前上下文计数曾达 7817/7936，显存 8108/8192 MiB，故没有增大 llama-server 上下文。生产协作延迟/覆盖率尚未测量；运行细节见 `D:\11\Logs\2026-10-27-cortico-runtime-debug.md`，后续按 `docs/tasks/2026-10-27-cortico-collaboration-metrics.md` 完成隔离标注样本测量。
+- Cortico `v0.2.7` 计划任务当前运行，服务器本机 `127.0.0.1:7777/api/status` ready，`/api/log?level=error` 返回空数组；usage 账本原损坏行已留备份并清理。上下文设为 8192，Provider 配置现为 `maxTokens=256`、`temperature=0.2`；当前上下文计数曾达 7817/7936，显存 8108/8192 MiB，故没有增大 llama-server 上下文。生产协作延迟/覆盖率尚未测量；运行细节见 `D:\11\Logs\2026-10-27-cortico-runtime-debug.md`，后续按 `docs/tasks/2026-10-27-cortico-collaboration-metrics.md` 完成隔离标注样本测量。该测量服务于核心私有运行时，不构成对外平台发布门槛。
 
-## Release 阻塞项
+## 核心运行时收束项
 
-ASR 实麦人工朗读条件已由任务制定者因环境免除；完整音频经 Hub 回合的历史证据已满足当前验收，不是当前 Release 阻塞项。创建 `v0.3.0` tag/Release 前仍需：
+ASR 实麦人工朗读条件已由任务制定者因环境免除；完整音频经 Hub 回合的历史证据已满足当前验收。当前不创建对外 Release；若要做内部版本标记或长期运行收束，仍需：
 
 1. 轮换历史日志中出现过的 Presence token 与服务器账户凭据，验证旧凭据失效，并记录 Hub 实际网络访问边界；Hub 当前无中心认证且链路未加密。
 2. 发布构建 `0.3.0`、SHA256、生产备份及回滚已在任务 A 部署中核验并实跑；但发布资产命名仍需改用与内容一致的版本名。历史活动路径带 `v0.2.1`，不能仅凭文件名识别版本。
 3. 查明生产 turn 41 到 turn 18 之间是 trace 归档还是替换，建立新旧 trace 对应关系。
 
-测试通过不等于发布证据齐全。无上述记录前，不创建 `v0.3.0` Release。
+测试通过不等于运行证据齐全。上述事项不阻塞当前私有运行，但在创建内部版本标记前应补齐。
 
 ## 历史事实纠偏
 
