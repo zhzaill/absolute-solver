@@ -28,7 +28,7 @@ Cortico 已有能力按以下方式接入 Solver：
 1. **Persona 层**：沿用 `corti-soulmate`/其他 Bot 的 Persona、Session、Memory、handoff 和梦机制；Solver 不另造人格记忆。
 2. **World 层**：Solver 作为 Cortico World/外部事实入口，使用 `pushEvent`、触发策略、事件库和工具回执；事件入队不等同于 Persona 已处理。
 3. **平台层**：QQ World 保留监听名单、会话标签、历史查询、图片/语音和起草-确认门；Solver 只接收经验证的 Persona 表达或工具结果。
-4. **扩展层**：桌宠、ASR、TTS、VTuber 等已存在的 Cortico 扩展优先直接挂载或通过明确适配器连接；Solver 不复制其模型调用和演出逻辑。
+4. **扩展层**：桌宠、ASR、TTS、VTuber 等已存在的 Cortico 扩展优先复用；先区分语义、合成和输出边界，再通过明确适配器连接。Solver 不复制 Persona 决策、模型调用和演出语义，但必须接管多设备音频路由与播放回执。
 5. **客户端层**：网页、Coo、桌面、手机和树莓派都是 Hub 客户端/Body。它们共享协议和权限，但不共享本地会话主状态。
 
 ## 能力与当前部署的区别
@@ -37,23 +37,23 @@ Cortico 已有能力按以下方式接入 Solver：
 
 | 能力 | Cortico 中的现有形式 | Absolute Solver 当前证据 | 当前结论 |
 |---|---|---|---|
-| Persona/Session/Memory/handoff/梦 | `corti-soulmate`、`cormini` 等 Bot 与 Core 契约 | 服务器 Cortico v0.2.7 的 `solver` 部署在线 | 已作为集成基础；具体 Persona 决策闭环仍待关联样本 |
-| Solver World | Cortico `solver` World，受 Bearer token 保护，向 Hub 回送 `persona.expression` | `worlds.solver.enabled=true`，Hub `18100` 可达 | 已部署 |
-| QQ | 内建 `qq` World，名单、历史、图片/语音和起草确认门 | 当前 Solver 部署配置只列 `solver` World，未启用 QQ | 可复用，未作为当前生产入口 |
-| 桌宠/VTuber TTS | `cortico-world-vtuber` 扩展，包含演出、声卡 TTS、字幕/流 | 当前部署 `extensions/` 为空；TTS 证据来自 Solver Provider `18080` 与 Native Body | 可复用，未作为当前 Solver TTS 实现 |
-| Cortico ASR | `cortico-world-asr` 扩展，RtAudio、端点切分和 FireRedASR2-AED | 当前部署未挂载该扩展；ASR 证据来自 Solver Provider `9881` | 可复用，未作为当前生产采集链 |
-| Coo/其他客户端 | 外部客户端或 WebView 访问 Hub/World 协议 | 尚无 Coo→Solver 的完整运行验收 | 目标形态，不能写成已完成 |
+| Persona/Session/Memory/handoff/梦 | Cortico Bot 与 Core 契约 | 生产 Cortico v0.2.7 `/api/status` ready；Hub 与 Solver World 曾确认连通 | Persona 是目标决策者；当前仍缺有因果关联的自然输入→决策→表达→Body 样本 |
+| Solver World | Cortico `solver` World，Bearer token 到 Hub | 生产 `worlds.solver.enabled=true`，Hub `18100` 可达；Cortico WebUI 只绑定 `127.0.0.1:7777` | 已部署；该 World 是桥接通道，不是 LAN 用户网页 |
+| QQ | 内建 `qq` World，名单、历史、图片/语音和起草确认门 | 生产 `/api/worlds` 显示 `qq=active`，但连接灯为 error、名单 0；NapCat `127.0.0.1:3001` 未配置/不可用 | 已挂载但通道未接通；不是当前可用入口。重新启用前须确认身份名单与发送确认门 |
+| 桌宠/VTuber TTS | `cortico-world-vtuber`：`outputTap` 捕获 `vtuber_act`、流式/整段合成、VTS 动作、字幕/动作 SSE、`DeviceAudioSink` | 生产未安装/启用该扩展；Cortico TTS 扩展的声卡路径与 Solver Provider `18080`→Native Body 是两条不同路径 | 可复用 Persona 演出语义和 TTS 能力；音频需适配到 Hub，扩展默认本机播放且 SSE 不传音频，不能绕过 active Body |
+| Cortico ASR | `cortico-world-asr` 扩展，RtAudio、能量门限切分、FireRedASR2-AED（以扩展文档为准） | 生产未挂载；当前经 Hub 的 ASR 来自 Solver Provider `9881`，完整 WAV/回放链已有证据 | 可复用；与 Solver Body 麦克风输入尚未形成同一条生产采集链 |
+| Coo/其他客户端 | WebView/浏览器访问 Solver 的统一客户端协议 | 尚无 Coo→Solver 完整运行验收；当前没有 LAN 交互网页 | 目标核心形态，未实现/未验收 |
 
 ## 一次完整回合的内容流
 
 ```text
 QQ / Coo / 浏览器 / 树莓派输入
-  -> Cortico World 或 Solver Client 事件
+  -> 对应 Cortico World 或 Solver Client 适配器
   -> Persona 读取事件、宪法和 Memory
   -> respond / tool / silence
   -> persona.expression 或 tool request
   -> Solver Hub 校验、授权、分配 turn
-  -> Cortico TTS/ASR 扩展或 Solver Provider 适配器
+  -> Solver Hub 选择 Cortico TTS 合成适配器或现有 Provider，并指定 active Body
   -> 选定客户端/Body 执行
   -> receipt / trace / monitor
 ```

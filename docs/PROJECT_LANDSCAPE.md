@@ -2,7 +2,7 @@
 
 当前可信状态手册：`docs/ABSOLUTE_SOLVER_CURRENT_STATE.md`；对应运行报告：`D:\11\Logs\2026-10-26-Absolute-Solver-当前可信状态.md`。本文保留为历史快照和架构背景，不作为实时状态源。
 
-> 定位校正（2026-10-27）：Absolute Solver 是个人私有运行时，不以通用多 Body/机器人平台为当前交付目标。下方项目清单保留历史接入和实验背景；当前必须维持的核心范围以 `docs/ABSOLUTE_SOLVER_CURRENT_STATE.md` 的“当前功能定位”为准。
+> 定位校正（2026-10-27）：Absolute Solver 是个人私有的 Cortico Persona 局域网访问运行时。下方项目清单保留历史接入和实验背景；局域网交互网页、多设备客户端协议与 Hub 管理的音频路由属于核心目标。当前状态以 `docs/ABSOLUTE_SOLVER_CURRENT_STATE.md` 的“当前功能定位”为准。
 
 日期：2026-10-25
 状态：核心基础设施在线，机器人方向已接入监视器，核心协议待并入
@@ -30,7 +30,7 @@ Absolute Solver 当前已经形成可运行的“一个 Mind、多种 Body、多
 | Absolute Solver | `D:\11\Projects\Absolute Solver` | Rust Hub、协议 v1、回合、Body 路由、记忆、TTS 适配、Presence、监视器 | `0.3.0`，服务器在线 | 保留为主干 |
 | Tauri Host | `desktop/tauri-host` | 本机托盘、Presence 本地策略、全屏覆盖层、撤销 | 代码完成，生产覆盖层驻留未验收 | 保留为 Host 权限面 |
 | Cortico Server | `E:\Absolute-Solver-Cortico-local` | Persona、World、`persona.expression`、Host/Solver World | `0.2.7` 正在 `7777` 运行 | 保留为 Persona 层 |
-| Coopanion | `E:\Coo-0.2.10-20261025` | Windows 桌宠宿主和 Coo CUA 表面 | `0.2.10` 已部署，计划任务 Ready，未首启 | 保留为可选桌面 Body |
+| Coopanion | `E:\Coo-0.2.10-20261025` | Windows 桌宠宿主和 Coo CUA 表面 | `0.2.10` 已部署，计划任务 Ready，未首启 | 作为 Solver 同一 Persona 的一种客户端/Body；不另建身份或权限 |
 | XuegerOS | `D:\11\Projects\xuegeros` | VM、相机、micro-ROS、建图、只读 Adapter、运动网关与 ROS 安全 | VM/相机/建图/Adapter 在线 | 保留为机器人 Body/World |
 | `dsh-xuegeros` | `D:\11\Projects\xuegeros\dsh-xuegeros` | 驾驶舱、VLA 循环、World 注入、人工确认驾驶 | 运行中，18 项自测通过但测试进程未自行退出 | 保留为操作者界面 |
 | `cortico-world-camera` | `D:\11\Projects\Portal\packages\cortico-world-camera` | Cortico 控制台相机/VLA 扩展，npm `0.2.0` | 已发布，独立实验链路 | 保留为 World 扩展，不并入 Hub |
@@ -239,10 +239,10 @@ Adapter 监听。
 
 - 不再增加新的顶层项目；新能力必须先映射到 Body/World/Provider/Tool Gateway。
 - 一个事实只允许一个权威入口；监视投影不能反向变成控制通道。
-- Cortico 继续只做 Persona；Hub 继续持有权限和回合。
+- Cortico 继续持有 Persona 决策；Hub 继续持有权限、设备回合和音频路由。
 - TTS、ASR、LLM、VLA 都是 Provider，不持有会话状态。
 - DSH 是操作者界面，不成为第二个 Hub。
-- Coo 是可选桌面 Body，不获得群聊继承权限。
+- Coo 是 Solver 的一种设备客户端/Body，必须复用统一入口协议，不获得 QQ 群聊身份或权限继承。
 - 原始相机帧、tensor、音频 payload 不进入长期记忆和 trace。
 - VLA 运动提案必须继续经过人工确认、租约、限幅和 watchdog。
 - Live2D/VTS 暂停，不再消耗主线注意力。

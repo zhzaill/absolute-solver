@@ -2,16 +2,17 @@
 
 ## What We Want
 
-Absolute Solver is a private runtime for one operator. Its current goal is to make Cortico, the Hub, model providers, and one native audio Body work together reliably on a trusted local network.
+Absolute Solver is a private, LAN-reachable runtime for one Cortico Persona. Its goal is to make the same Persona available through a shared interactive web entry and controlled clients such as Coo, desktop, phone, and Raspberry Pi, while Cortico owns semantic decisions and the Hub owns device routing and execution facts.
 
 The core outcome is:
 
 - one Persona decision owner and one Hub runtime authority;
-- a verifiable path from audio input through ASR/LLM/TTS to local playback;
+- one LAN client protocol and web entry that can carry text/audio to the same Persona across devices;
+- a verifiable path from client input through Cortico decision, Hub-routed ASR/TTS, and selected-device playback;
 - permissions, failure handling, and trace records that make the private runtime understandable and recoverable;
 - adapters that keep future integrations possible without making them current product commitments.
 
-Multiple Bodies, robotics, VLA, desktop agents, external developer APIs, and a public platform are optional experiments. They enter the active scope only when the operator has a concrete use for them.
+Robotics, VLA, desktop agents, external developer APIs, and a public platform remain optional. The LAN web client and supported device access are core requirements, not optional monitoring experiments. Cortico-native audio or avatar output must be adapted through Hub routing before counting as a Solver output path.
 
 ## Invariants
 

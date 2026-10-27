@@ -12,20 +12,20 @@
 
 ## 一、目的
 
-Solver 的用途是把一个 Cortico Persona 可靠地带到局域网中的不同入口：桌面、手机、树莓派屏幕、Coo 或其他受控客户端。客户端可以不同，Persona、会话事实、权限判断和运行证据不能因此分裂。
+Solver 的用途是让同一个 Cortico Persona 通过局域网入口出现在不同设备上：浏览器、桌面、手机、树莓派屏幕、Coo 或其他受控客户端。它不是再造一个桌宠或 QQ 客户端；它把 Cortico 已有的 Persona、World、平台接入和 TTS/演出能力接入统一的设备运行时。设备可以不同，Persona、会话事实、权限判断和运行证据不能因此分裂。
 
 当前核心路径是：
 
 ```text
-客户端输入（文字/音频）
-  -> Solver Hub（会话、权限、路由、音频边界）
-  -> Cortico World / Persona（事实接收与语义决定）
-  -> persona.expression / 工具请求
-  -> Solver Hub（授权、TTS、Body 路由）
-  -> 客户端或 Native Audio Body
+浏览器 / Coo / QQ / Cortico World 输入
+  -> Cortico World 归档并投递事实
+  -> 同一个 Cortico Persona 决定 respond / tool / silence
+  -> persona.expression / 经授权的工具请求
+  -> Solver Hub 校验、编排、TTS 与目标设备路由
+  -> 浏览器 / Coo / 桌面 / 手机 / 树莓派 Body 执行并回执
 ```
 
-局域网网页是 Solver 的核心用户入口，不是只读监控面板。它应能在桌面、手机和树莓派屏幕的浏览器中打开；Coo 可用 WebView/浏览器访问同一入口。网页是一个客户端形态，不是系统权威。不同设备通过同一套 Hub/World 协议接入，不各自实现一份 ASR/LLM/TTS。
+局域网网页是 Solver 的核心交互入口，不是只读监控面板。它应能在桌面、手机和树莓派屏幕的浏览器中打开；Coo 可用 WebView/浏览器访问同一入口。网页是一个客户端形态，不是系统权威。Cortico 自带 WebUI 是管理控制台，生产实例当前只监听服务器 `127.0.0.1:7777`，不能替代 Solver 的局域网客户端网页。不同设备通过同一套 Hub/World 协议接入；不在每个设备分别实现 Persona、记忆、LLM 或完整 TTS 系统。
 
 ## 二、权威层级
 
@@ -50,7 +50,7 @@ Cortico 复用已有的 Persona、Session、Memory、handoff、梦、World 和�
 - 决定响应、沉默、调用工具或请求表达；
 - 管理 Persona 自己的宪法、记忆和交接；
 - 通过 QQ、终端、网页或其他 World 接收外部事实；
-- 通过已有 TTS/ASR/桌宠扩展完成语义层面的接入。
+- 通过已有 TTS/ASR/桌宠扩展完成语义层面的接入。Cortico 能力只有经过 Solver 的设备、权限和回执适配后，才能成为 Solver 的设备输出路径。
 
 Cortico 不直接拥有 Hub 的 Body 注册、播放设备选择、权限租约或生产 trace。
 
@@ -72,7 +72,8 @@ Hub 不建立第二个 Persona，不在正常路径中用自己的 LLM 取代 Co
 - World 报告环境事实，或提供受限工具；`pushEvent` 成功只代表落库/入队。
 - Provider 提供 ASR、LLM、TTS、视觉等能力；Provider 不拥有会话权威。
 - QQ、桌宠、ASR、TTS 和其他成熟能力优先复用 Cortico 的既有 World/扩展接口。
-- Solver 只补齐 Hub 所需的协议适配、权限和设备回执，不复制成熟实现。
+- Cortico VTuber 扩展的 `outputTap`、演出工具、字幕/动作流、TTS 合成接口和本机音频 sink 各有边界。其 SSE 不承载音频，默认播放落在 Cortico 主机声卡；不能把它描述成已支持 Hub/手机/树莓派播放。
+- Solver 补齐设备协议、权限和播放回执适配。音频必须由 Hub 路由到选定 Body；如果复用 Cortico 的声线合成服务，也不得让扩展的本机声卡绕过 Hub 成为第二个活动输出。
 
 ### 客户端与 Body
 
@@ -113,7 +114,7 @@ Hub 不建立第二个 Persona，不在正常路径中用自己的 LLM 取代 Co
 
 ## 七、范围判定
 
-核心范围：Cortico Persona、已有 World/Provider 能力、Hub 会话与权限、局域网网页客户端、桌面/手机/树莓派的可访问性、一个可验收的音频 I/O 路径和可追溯回执。多种客户端可同时连接；每个 turn 的活动音频输出仍由 Hub 明确选择，避免多个扬声器互相争播。
+核心范围：Cortico Persona、已有 World/Provider 能力、Hub 会话与权限、局域网网页客户端、桌面/手机/树莓派的可访问性、一个经 Hub 路由且可验收的音频 I/O 路径和可追溯回执。多种客户端可同时连接；每个 turn 的活动音频输出仍由 Hub 明确选择，避免多个扬声器互相争播。当前生产证据仅覆盖 Native Audio Body；网页、Coo、手机、树莓派音频和 Cortico 桌宠到 Hub 的音频适配都仍待实现或验收。
 
 机器人/VLA、桌面 CUA、独立只读监控面板、gRPC、Provider 段内流式和公开 SDK 只有在出现明确使用场景后才进入主线。Cortico 已有 QQ/桌宠/TTS/ASR 实现优先复用；Solver 的网页客户端和多设备可访问性属于核心功能。它们不能要求核心系统提前承担新的状态所有者。
 

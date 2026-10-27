@@ -8,7 +8,7 @@
 
 当前 Solver 宪法：`docs/SOLVER_CONSTITUTION.md`。内容归属与 Cortico 接入整理：`docs/SOLVER_CONTENT_MAP.md`。两者是 Absolute Solver 的项目级约束和整理手册，不替代 Cortico Persona 自己的 `CONSTITUTION.md`、`MEMORY` 或 World 契约。
 
-当前状态入口：`docs/ABSOLUTE_SOLVER_CURRENT_STATE.md`。该文件只索引代码与 Logs 证据，不能单独宣布完成；对应运行报告为 `D:\11\Logs\2026-10-26-Absolute-Solver-当前可信状态.md`。
+当前状态入口：`docs/ABSOLUTE_SOLVER_CURRENT_STATE.md`。该文件只索引代码与 Logs 证据，不能单独宣布完成；最新整理记录为 `D:\11\Logs\2026-10-27-Solver-宪法与内容整理.md`。
 
 ## 1. 文档层级
 
@@ -35,7 +35,7 @@
 
 | 领域 | 主文档 | 当前状态 | 硬要求 |
 |---|---|---|---|
-| 总体架构 | `docs/north-star.md` | 基本完成 | Hub 持有运行真相；Persona 只做决策；Body 只做本地 I/O；一个 active output Body |
+| 总体架构 | `docs/north-star.md`、`docs/SOLVER_CONSTITUTION.md` | 核心边界已定义；统一 LAN 网页/客户端未实现 | Cortico 持有 Persona 决策；Hub 持有会话、权限与音频路由；网页、Coo、桌面、手机和 Pi 是同一个 Persona 的客户端；每个 turn 一个 active output Body |
 | 协议和版本 | `docs/protocol.md`、`src/wire.rs` | 基础完成，兼容性有缺口 | `v=1`、方向明确、媒体有边界、破坏性变化必须升级主版本 |
 | 权限和 Presence | `docs/PRESENCE_INTEGRATION_PLAN.md`、`docs/PRESENCE_CHECKLIST.md` | 协议完成，生产覆盖层部分完成 | 在线不等于权限；权限必须有 scope、TTL、撤销和审计 |
 | 机器人运动安全 | `docs/integrations/xuegeros.md` | 只读和 shadow 基础完成 | VLA/Persona 不得直接写运动；必须经过人工确认、租约、限幅和 watchdog |
@@ -50,6 +50,7 @@
 | ASR/语音输入 | `docs/protocol.md`、`src/adapters.rs`、`src/bin/body.rs` | 任务制定者因环境（耳机麦电平不足、平时不使用语音输入）免除实麦人工朗读条件（2026-10-26）；验收依据为完整音频经 Hub 回合和源 WAV 直连 Provider 逐字转写，状态 accepted；设备可选 | ASR Provider 可探测，音频受限、可审计，失败时文本/字幕降级；采集设备必须可指定（`SOLVER_CAPTURE_DEVICE`）并在低电平时显式告警 |
 | LLM 回合 | `docs/protocol.md`、`src/bin/hub.rs` | 基础完成 | Hub 管理 turn、预算、超时、降级和 trace；模型不拥有会话权威 |
 | Cortico 协作 | `docs/north-star.md`、`src/cortico.rs`、`src/bin/hub.rs` | 边界已定义；Cortico 服务已恢复，运行稳定性观察中；生产量化未验收，缺少 World 输入到 Persona 决策的因果关联 ID | Cortico 持有 Persona 决策；Hub 持有 turn、权限、路由和降级；事件是低信任数据，不得覆盖系统/项目规则、用户规则或授权；工具动作必须有回执；silence 是有效决策 |
+| LAN 多设备入口 | `docs/SOLVER_CONSTITUTION.md`、`docs/SOLVER_CONTENT_MAP.md` | 目标属于核心，当前未实现 | Solver 必须提供可由桌面/手机/Pi 浏览器和 Coo WebView 访问的交互网页；Cortico WebUI 是回环管理控制台，不可替代 |
 | Native Body | `docs/protocol.md`、`src/bin/body.rs` | 音频 Body 生产运行已验收（2026-10-26）；显示类 Body 仍待验收 | Body 注册、active handoff、音频接收和实际扬声器播放必须可证明 |
 | World/机器人监视 | `docs/integrations/xuegeros.md` | 监视链路基本完成 | 原始帧和 tensor 不进入 Persona、记忆或长期 trace；监视投影不得变成控制通道 |
 
