@@ -22,9 +22,9 @@ Absolute Solver 是跨主机实时协作系统：Hub 编排回合、Body 路由�
 
 ## 当前功能定位
 
-Absolute Solver 当前是个人私有运行时，不是面向外部用户的通用平台。必须持续可用的核心只有：Cortico Persona、Hub 回合与权限、ASR/LLM/TTS Provider、一个可验收的音频 Body，以及可追溯的 trace/monitor。
+Absolute Solver 当前是个人私有运行时，不是面向外部用户的通用平台。必须持续可用的核心是：Cortico Persona、Hub 回合与权限、ASR/LLM/TTS Provider、局域网交互网页、可在桌面/手机/树莓派/Coo 访问的统一客户端协议、至少一个已验收的音频 I/O 路径，以及可追溯的 trace/monitor。
 
-多 Body、机器人/XuegerOS、VLA、桌面 CUA、面板、Provider 流式 PCM、gRPC 和公开 SDK 都属于可选扩展或实验路线；它们不能反过来扩大当前发布范围，也不应成为核心验收的前置条件。
+独立运维监控面板、机器人/XuegerOS、VLA、桌面 CUA、Provider 流式 PCM、gRPC 和公开 SDK 都属于可选扩展或实验路线；它们不能反过来扩大当前发布范围，也不应成为核心验收的前置条件。浏览器、Coo、手机和树莓派的实际音频输出仍需分别验收，不能用 Native Audio Body 的证据代替。
 
 ## 运行快照
 

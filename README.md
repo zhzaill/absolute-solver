@@ -1,6 +1,6 @@
 # Absolute Solver
 
-Absolute Solver 是一个部署在可信局域网内的个人私有实时语音运行时：Cortico 负责 Persona 决策，Hub 编排回合和权限，ASR、LLM、TTS 作为 Provider 接入，一个 Native Audio Body 执行真实音频 I/O。Hub 是逻辑协调点，但当前没有中心身份认证，不能直接暴露到公网。
+Absolute Solver 是一个部署在可信局域网内的个人私有实时语音运行时：Cortico 负责 Persona 决策，Hub 编排回合和权限，局域网交互网页是统一入口，ASR、LLM、TTS 作为 Provider 接入，Native Audio Body 执行已验收的真实音频 I/O。桌面、手机、树莓派和 Coo 通过同一客户端协议接入；Hub 当前没有中心身份认证，不能直接暴露到公网。
 
 ## 当前状态
 
@@ -17,7 +17,7 @@ Absolute Solver 是一个部署在可信局域网内的个人私有实时语音�
 ## 架构
 
 ```text
-Native Audio Body ── WebSocket v1 ──> Hub ──> ASR / LLM / TTS Provider
+Browser / Coo / Desktop / Phone / Pi ── WebSocket v1 ──> Hub ──> Cortico / ASR / LLM / TTS
        │                               │
        ├─ 麦克风采集                  ├─ 回合编排与权限判断
        ├─ 本地播放                    ├─ Body 路由与 active handoff
