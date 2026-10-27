@@ -78,7 +78,7 @@ Hub Presence intent
   -> TTL grant / revoke
 ```
 
-Cortico/Hub 的权责和测量边界以 `docs/ABSOLUTE_SOLVER_CURRENT_STATE.md`、`docs/tasks/2026-10-27-cortico-collaboration-metrics.md` 为准：World `pushEvent` 保存/投递不等于 Persona 已处理；Persona 可响应、调用工具或保持沉默；Hub 接受 expression（HTTP 202）不等于 Body 已播放。2026-10-27 Cortico 不可达，生产协作可用率及事件到 Persona 决策延迟未测量。历史 TTS 报告只证明 Hub expression ingress 到 Body 播放，不证明 Cortico 当时在线。
+Cortico/Hub 的权责和测量边界以 `docs/ABSOLUTE_SOLVER_CURRENT_STATE.md`、`docs/north-star.md`、`docs/tasks/2026-10-27-cortico-collaboration-metrics.md` 为准：World `pushEvent` 保存/投递不等于 Persona 已处理；事件 payload 是低信任数据，不能改写系统/项目规则、用户规则或授权；Persona 可响应、调用工具或保持沉默；Hub 接受 expression（HTTP 202）不等于 Body 已播放。2026-10-27 Cortico 不可达，生产协作可用率及事件到 Persona 决策延迟未测量。历史 TTS 报告只证明 Hub expression ingress 到 Body 播放，不证明 Cortico 当时在线。
 
 当前有两个机器人事实出口，但用途已分开：
 

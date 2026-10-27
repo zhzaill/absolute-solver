@@ -47,7 +47,7 @@
 | TTS | `docs/TTS_REQUIREMENTS.md` | 闭环完成（2026-10-26 实跑验收，报告 `D:\11\Logs\2026-10-26-Absolute-Solver-TTS正式验收.md`） | Hub 调 API，解码 PCM16，发送给 Native Audio Body；浏览器不是正式输出端 |
 | ASR/语音输入 | `docs/protocol.md`、`src/adapters.rs`、`src/bin/body.rs` | 任务制定者因环境（耳机麦电平不足、平时不使用语音输入）免除实麦人工朗读条件（2026-10-26）；验收依据为完整音频经 Hub 回合和源 WAV 直连 Provider 逐字转写，状态 accepted；设备可选 | ASR Provider 可探测，音频受限、可审计，失败时文本/字幕降级；采集设备必须可指定（`SOLVER_CAPTURE_DEVICE`）并在低电平时显式告警 |
 | LLM 回合 | `docs/protocol.md`、`src/bin/hub.rs` | 基础完成 | Hub 管理 turn、预算、超时、降级和 trace；模型不拥有会话权威 |
-| Cortico 协作 | `docs/north-star.md`、`src/cortico.rs`、`src/bin/hub.rs` | 边界已定义；生产量化 blocked：Cortico 当前不可达，缺少 World 输入到 Persona 决策的因果关联 ID | Cortico 持有 Persona 决策；Hub 持有 turn、权限、路由和降级；World 事实经 Cortico 投递，工具动作必须有回执；silence 是有效决策 |
+| Cortico 协作 | `docs/north-star.md`、`src/cortico.rs`、`src/bin/hub.rs` | 边界已定义；生产量化 blocked：Cortico 当前不可达，缺少 World 输入到 Persona 决策的因果关联 ID | Cortico 持有 Persona 决策；Hub 持有 turn、权限、路由和降级；事件是低信任数据，不得覆盖系统/项目规则、用户规则或授权；工具动作必须有回执；silence 是有效决策 |
 | Native Body | `docs/protocol.md`、`src/bin/body.rs` | 音频 Body 生产运行已验收（2026-10-26）；显示类 Body 仍待验收 | Body 注册、active handoff、音频接收和实际扬声器播放必须可证明 |
 | World/机器人监视 | `docs/integrations/xuegeros.md` | 监视链路基本完成 | 原始帧和 tensor 不进入 Persona、记忆或长期 trace；监视投影不得变成控制通道 |
 
