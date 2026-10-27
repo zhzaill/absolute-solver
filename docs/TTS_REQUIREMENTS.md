@@ -41,7 +41,7 @@
 - `SOLVER_TTS_SEGMENTED=0`：兼容路径。一次文本对应一次 Provider WAV 请求、一次 WAV 解码和一次 `say`/`say.audio` 输出。
 - `SOLVER_TTS_SEGMENTED=1`：分段路径。Hub 按句切分文本，首段优先合成并发送，后续段以有界并发预生成，Body 按 `turn`/`seq` 顺序连续播放，并支持打断、失败降级、active Body handoff 和旧 Body 兼容。该路径已于 2026-10-26 实跑验收通过，证据见 `D:\11\Logs\2026-10-26-tts-segmented.md`。
 
-Provider 侧流式 PCM（例如 GPT-SoVITS 分块或 `openai_sse`）仍未开始。分段 WAV 与 Provider 流式 PCM 是两个不同能力：前者已完成，后者仍需单独定义接口、取消规则、输出位置和运行报告，不得把现有 `seq` 或 WAV 分段误称为 Provider 流式输出。
+Provider 侧流式 PCM 已完成可行性测量，但实现任务当前为 `blocked`。同一文本、同一音色下，直连 Provider (`streaming_mode=3`) 首块 966 ms / 总时长 4054 ms，首块/总时长 0.238，末 100 ms 内到达 0/28 块；经线上网关 (`stream=true`) 首块 3221 ms / 总时长 3227 ms，首块/总时长 0.998，末 100 ms 内到达 7/7 块。网关 `gateway.py:388-404` 收齐整段后才返回，导致假流式。分段 WAV 与 Provider 流式 PCM 是不同能力；解除阻塞前不得在 Hub 侧叠加第二套切片逻辑。证据与顺序见 `D:\11\Logs\2026-10-27-tts-streaming-pcm-可行性判定.md`。
 
 ## 1. 目标
 
@@ -259,7 +259,7 @@ DSH TTS 工具和浏览器工具卡可以保留为：
 
 ### 当前结论
 
-分段生成已实现并通过实跑验收。任务卡为 `D:\11\Projects\Absolute Solver\docs\tasks\2026-10-26-tts-segmented.md`（`accepted`），报告为 `D:\11\Logs\2026-10-26-tts-segmented.md`。166 字文本实测切为 8 段，首段触发至实际出声 1,780 ms，触发至末段播完 40,241 ms，段间空档最大 2 ms，8/8 播放且 0 丢弃；69 项测试通过。验收同时覆盖打断、中途失败降级、播放中 handoff 和旧 Body 兼容，并修复了立体声 2 倍速与打断不清队列两个真实缺陷。
+分段生成已实现并通过实跑验收。任务卡为 `D:\11\Projects\Absolute Solver\docs\tasks\2026-10-26-tts-segmented.md`（`accepted`），报告为 `D:\11\Logs\2026-10-26-tts-segmented.md`。166 字文本实测切为 8 段，首段触发至实际出声 1,780 ms，触发至末段播完 40,241 ms，段间空档最大 2 ms，8/8 播放且 0 丢弃；69 项测试通过。验收同时覆盖打断、中途失败降级、播放中 handoff 和旧 Body 兼容，并修复了立体声 2 倍速与打断不清队列两个真实缺陷。段级回执（Body → Hub）已于 2026-10-27 验收并部署 Hub；生产 Body 尚待升级，当前生产 monitor 回执计数为 0，报告为 `D:\11\Logs\2026-10-27-tts-segment-receipts-production-deploy.md`。
 
 
 ### Provider 流式 PCM 的最低要求
@@ -303,7 +303,7 @@ Provider 流式 PCM 进入实现前，任务卡必须明确以下边界：
 - Presence 生产覆盖层反馈：部分完成，仍有提前撤销问题（不在 TTS 范围）；
 - 协议主文档：运行规范以 `docs/protocol.md`、`src/wire.rs` 和 schema 为准；`docs/WIRE_PROTOCOL_V2.md` 是未采纳的历史设计稿，不得作为运行规范；
 - 未知 `type` 的宽容解析：已完成（2026-10-26；Hub 回 `protocol.error{code:"unknown_type",fatal:false}` 且连接不断，Body 记 `unknown.type` 后继续；含实跑冒烟）。
-- 分段生成（首段先播）：已完成并验收（2026-10-26，任务卡 `docs/tasks/2026-10-26-tts-segmented.md` 状态 `accepted`，报告 `D:\11\Logs\2026-10-26-tts-segmented.md`）：166 字 → 8 段，首段 1.78 s 出声、段间空档 ≤ 2 ms、总时长 40.2 s（基线 59.0 s）；打断、中途失败、播放中 handoff、旧 Body 兼容均已实跑。验收中修复了立体声 2 倍速播放与打断不清队列两个真实缺陷。仍存在的边界：打断不能切断正在发声的那一块，Body 侧段计数只在 trace；120 秒整轮预算已由慢 Provider 实跑触发并记录在 `docs/tasks/2026-10-26-tts-turn-budget.md`。流式 PCM（Provider 侧分块）仍未开始，Amadeus 的 `openai_sse` 协议可作对齐参考（`D:\11\Logs\2026-10-26-tts-segmented-design.md`）。
+- 分段生成（首段先播）：已完成并验收（2026-10-26，任务卡 `docs/tasks/2026-10-26-tts-segmented.md` 状态 `accepted`，报告 `D:\11\Logs\2026-10-26-tts-segmented.md`）：166 字 → 8 段，首段 1.78 s 出声、段间空档 ≤ 2 ms、总时长 40.2 s（基线 59.0 s）；打断、中途失败、播放中 handoff、旧 Body 兼容均已实跑。验收中修复了立体声 2 倍速播放与打断不清队列两个真实缺陷。段级回执已于 2026-10-27 实跑验收，Body 与 Hub 的计数对账、重复回执幂等、旧 Body 缺失回执均已覆盖；Hub 字段已部署到生产，生产 Body 尚待升级接入。打断仍不能切断当前正在发声的那一块。120 秒整轮预算已由慢 Provider 实跑触发并记录在 `docs/tasks/2026-10-26-tts-turn-budget.md`。Provider 流式 PCM 已完成可行性测量但因网关缓冲而 blocked，不是未开始；见 `D:\11\Logs\2026-10-27-tts-streaming-pcm-可行性判定.md`。
 
 只有 gRPC 触发条件成立后，才按 `GRPC_MIGRATION_TRIGGERS.md` 创建 proto、实现协议适配层，并在迁移报告中记录输出位置和验收证据。
 

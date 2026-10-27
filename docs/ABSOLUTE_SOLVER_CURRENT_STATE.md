@@ -1,6 +1,6 @@
 # Absolute Solver 当前可信项目现状
 
-更新时间：2026-10-26（Asia/Shanghai）
+更新时间：2026-10-27（Asia/Shanghai）
 适用范围：仅 Absolute Solver 仓库、Hub/Body/Provider 运行链路及其验收证据。本文是日期快照，不代替源代码、实际运行结果和 `D:\11\Logs` 原始报告。
 
 ## 证据规则
@@ -16,14 +16,15 @@ Absolute Solver 是跨主机实时协作系统：Hub 编排回合、Body 路由�
 ## 仓库快照
 
 - 仓库：`https://github.com/zhzaill/absolute-solver`，分支 `main`。
-- 应用版本：Cargo `0.3.0`；GitHub 尚无 `v0.3.0` tag/Release。
-- 最近已提交的本地代码包含 ASR 设备选择、麦克风诊断工具和录音台；该提交尚未推送到 `origin/main`。
-- 本次快照中工作区另有 `docs/PROJECT_EXECUTION_METHOD.md` 与 `docs/tasks/2026-10-26-asr-input.md` 的未提交修改。不要把工作区描述为干净。
-- 自动化验证已通过：`cargo fmt --check`；39 个库测试、11 个 Body 测试、20 个 Hub 测试；协议 schema 生成检查曾在缺少生成文件时失败，随后补交 schema 后通过。
+- 应用版本：Cargo `0.3.0`；GitHub 尚无 `v0.3.0` tag/Release。当前工作树快照提交为 `63f3c2b`。
+- 本地 `main` 与 `origin/main` 同步到 `63f3c2b`；工作区干净。
+- 最新 CI 的格式、测试、schema 生成和 schema 差异检查全部通过；任务 A 的 Rust 测试为 42 个库、12 个 Body、23 个 Hub。
 
 ## 运行快照
 
-最近一次服务器状态记录：Hub `LAN_HUB_ADDRESS:18100`、版本 `0.3.0`、turn 46、idle、无 active Body；ASR/LLM/TTS 健康检查此前均通过。服务器在 2026-10-26 23:00 左右休眠，WoL 未唤醒，因此这些是休眠前快照，不应当作当前在线保证。现场开机或在 BIOS/NIC 启用 PCIe 网络唤醒后再复查。
+2026-10-27 已将任务 A 的 Hub 二进制部署至 `LAN_HUB_ADDRESS:18100`。当前版本 `0.3.0`、状态 `idle`、turn 48、无 active Body。生产进程 SHA256 为 `5CAD35128BCB1FDAC944FE411452FAC025632DF87F65BB754A8D8332B57CF1C7`，旧版备份及回滚记录见 `D:\11\Logs\2026-10-27-tts-segment-receipts-production-deploy.md`。
+
+生产 `/monitor.json` 已有 `segments_played_body`、`segments_skipped_body`、`segments_dropped_body` 字段，目前均为 0；生产尚无更新后的 Body 在线发送真实回执，因此这不是生产回执链路实跑计数。Hub 启动恢复发现 trace 第 49、104 行各有一条格式损坏记录，跳过并追加 `trace.recovered` 事件；原 trace 没有清洗或重写。
 
 | Provider | 地址 | 最近证据 | 状态 |
 |---|---|---|---|
@@ -39,6 +40,8 @@ Absolute Solver 是跨主机实时协作系统：Hub 编排回合、Body 路由�
 | Native TTS、分段首段先播、打断、active handoff | accepted | `D:\11\Logs\2026-10-26-Absolute-Solver-TTS正式验收.md`、`D:\11\Logs\2026-10-26-tts-segmented.md` |
 | 120 秒整轮 TTS 预算 | accepted | `D:\11\Logs\2026-10-26-tts-turn-budget.md` |
 | Trace 撕裂行恢复 | accepted | TTS 正式验收报告 §1.3、Rust 测试 |
+| TTS 段级回执 | accepted；Hub 已部署，Body 端待更新客户端接入生产 | `D:\11\Logs\2026-10-27-tts-segment-receipts.md`、`D:\11\Logs\2026-10-27-tts-segment-receipts-production-deploy.md` |
+| Provider 流式 PCM | blocked（已完成可行性测量） | `D:\11\Logs\2026-10-27-tts-streaming-pcm-可行性判定.md`；网关缓冲整段响应 |
 | ASR Provider 与 WAV 回放 | verified | `D:\11\Logs\2026-10-26-asr-input-turn.md` |
 | ASR 实麦通路 | accepted（任务制定者环境豁免，2026-10-26） | 完整音频经 Hub 回合、源 WAV 直连 Provider；`D:\11\Logs\2026-10-26-asr-input-turn.md`、`D:\11\Logs\2026-10-26-ASR实麦诊断与录音台.md` |
 
@@ -51,7 +54,8 @@ ASR 诊断结论：此前两次 Hub 实麦回合仅转写为“嗯”。本地�
 - 用 `录音键.cmd` 在可用设备上录制约 6 秒人工短句，逐字核对转写，作为可选 ASR 补证；当前不阻塞发布。
 - 排查 Realtek 麦克风阵列送全 0（静音热键、Windows 输入电平、Realtek/Nahimic 驱动设置），或接入另一支可用麦克风。
 - 恢复服务器远程开机：现场检查 BIOS/NIC 的 PCIe Wake-on-LAN 设置。
-- Body 分段播放/丢弃回执尚未上报 Hub monitor；Provider 侧流式 PCM 尚未开始。
+- 更新后的 Body 尚未部署到生产，因此生产 Body 侧分段回执还没有实跑数据；任务卡 `docs/tasks/2026-10-26-tts-segment-receipts.md` 已 accepted，Hub 字段已上线。
+- Provider 侧流式 PCM 已测量但 blocked：直连 Provider 真流式，经网关变成整段缓冲；解除步骤见 `docs/tasks/2026-10-26-tts-streaming-pcm.md` 和可行性报告。
 - Presence 覆盖层提前撤销仍待生命周期审计；机器人 Nav2/实体运动未验收。
 
 ## Release 阻塞项
@@ -59,7 +63,7 @@ ASR 诊断结论：此前两次 Hub 实麦回合仅转写为“嗯”。本地�
 ASR 实麦人工朗读条件已由任务制定者因环境免除；完整音频经 Hub 回合的历史证据已满足当前验收，不是当前 Release 阻塞项。创建 `v0.3.0` tag/Release 前仍需：
 
 1. 轮换历史日志中出现过的 Presence token 与服务器账户凭据，验证旧凭据失效，并记录 Hub 实际网络访问边界；Hub 当前无中心认证且链路未加密。
-2. 生成待发布构建并记录版本/SHA256，核验部署与回滚文件。历史文件名带 `v0.2.1`，运行代码为 `0.3.0`，不能仅凭文件名回滚。
+2. 发布构建 `0.3.0`、SHA256、生产备份及回滚已在任务 A 部署中核验并实跑；但发布资产命名仍需改用与内容一致的版本名。历史活动路径带 `v0.2.1`，不能仅凭文件名识别版本。
 3. 查明生产 turn 41 到 turn 18 之间是 trace 归档还是替换，建立新旧 trace 对应关系。
 
 测试通过不等于发布证据齐全。无上述记录前，不创建 `v0.3.0` Release。
