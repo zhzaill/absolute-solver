@@ -92,8 +92,8 @@ Cortico/Hub 的权责和测量边界以 `docs/ABSOLUTE_SOLVER_CURRENT_STATE.md`�
 ### Hub
 
 - 版本：`0.3.0`
-- 地址：`http://LAN_HUB_ADDRESS:18100`
-- 当前生产服务器地址以 `LAN_HUB_ADDRESS` 为准；`LAN_HUB_ADDRESS` 仅出现在 2026-10-26 本机预算验收的“生产服务器不可达”历史记录，不是当前生产地址。
+- 地址：生产 LAN Hub（具体地址保留在本地部署配置中）
+- 历史验收曾涉及不同私有网段；当前生产地址以操作者本地部署配置为准。
 - 状态：`idle`
 - 连接数：`0`
 - active Body：无
@@ -228,7 +228,7 @@ Adapter 监听。
 6. 机器人纯负角速度路径仍有历史间歇问题。
 7. Guest DHCP 是短租约，NetworkManager 仍损坏。
 8. Coo 未完成交互桌面首启与 CUA 安全行为验收。
-9. 远程仓库为私有仓库；当前没有对外 `v0.3.0` tag/Release 目标。
+9. 源码仓库公开；生产运行仍限可信局域网。当前没有 `v0.3.0` tag/Release 目标。
 10. 两个仓库都有未提交改动，当前状态是运行验证版，不是发布提交。
 
 历史连续性说明：2026-10-23 Presence 部署报告记录生产 turn=41；2026-10-26 TTS 重启恢复报告记录 turn=18 且从 `E:\Absolute-Solver\trace\absolute-solver-v0.2.1.jsonl` 恢复。两者不能拼成一条连续 turn 序列，说明期间 trace 被替换或归档；后续发布必须保存 trace 归档映射。

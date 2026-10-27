@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Absolute Solver</title>
+  <style>
+    :root { color-scheme: light; --ink:#17212b; --muted:#667482; --line:#d8e0e7; --paper:#f7f9fb; --panel:#fff; --blue:#1769aa; --blue-soft:#e7f2fb; --coral:#c4554b; --good:#18794e; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; background:var(--paper); color:var(--ink); font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    main { width:min(1100px,100%); margin:0 auto; padding:22px; }
+    header { display:flex; justify-content:space-between; gap:20px; align-items:flex-start; padding:4px 0 20px; border-bottom:1px solid var(--line); }
+    h1 { margin:0; font-size:clamp(24px,4vw,36px); letter-spacing:0; }
+    .subtitle { margin:5px 0 0; color:var(--muted); }
+    .status { display:flex; align-items:center; gap:8px; color:var(--muted); white-space:nowrap; }
+    .dot { width:10px; height:10px; border-radius:50%; background:#9ba7b1; }
+    .dot.good { background:var(--good); }
+    .dot.bad { background:var(--coral); }
+    .layout { display:grid; grid-template-columns:minmax(0,1fr) 280px; gap:18px; margin-top:18px; }
+    .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; }
+    .conversation { min-height:560px; display:flex; flex-direction:column; overflow:hidden; }
+    .messages { flex:1; padding:18px; overflow:auto; }
+    .empty { color:var(--muted); padding:80px 18px; text-align:center; }
+    .message { max-width:86%; margin:0 0 16px; }
+    .message.user { margin-left:auto; }
+    .message .label { color:var(--muted); font-size:12px; margin-bottom:4px; }
+    .bubble { padding:11px 14px; border:1px solid var(--line); border-radius:8px; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .user .bubble { background:var(--blue-soft); border-color:#c2def2; }
+    .solver .bubble { background:#fff; }
+    .system .bubble { color:var(--muted); background:#f5f7f9; font-size:13px; }
+    form { display:flex; gap:10px; padding:14px; border-top:1px solid var(--line); background:#fbfcfd; }
+    textarea { flex:1; min-height:48px; max-height:160px; resize:vertical; border:1px solid #b9c6d0; border-radius:6px; padding:11px 12px; font:inherit; color:var(--ink); background:white; }
+    button { border:1px solid var(--blue); border-radius:6px; padding:0 18px; background:var(--blue); color:white; font:inherit; cursor:pointer; }
+    button:hover { background:#11598f; }
+    button:disabled { cursor:not-allowed; opacity:.5; }
+    aside { padding:16px; align-self:start; }
+    aside h2 { margin:0 0 12px; font-size:16px; }
+    dl { margin:0; }
+    dt { margin-top:13px; color:var(--muted); font-size:12px; }
+    dd { margin:2px 0 0; overflow-wrap:anywhere; }
+    .note { margin:18px 0 0; padding-top:14px; border-top:1px solid var(--line); color:var(--muted); font-size:12px; }
+    .error { color:var(--coral); }
+    @media (max-width:760px) { main { padding:14px; } header { flex-direction:column; } .layout { grid-template-columns:1fr; } .conversation { min-height:calc(100vh - 200px); } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div><h1>Absolute Solver</h1><p class="subtitle">局域网 Persona 入口</p></div>
+      <div class="status"><span id="statusDot" class="dot"></span><span id="statusText">连接中…</span></div>
+    </header>
+    <div class="layout">
+      <section class="panel conversation" aria-label="对话">
+        <div id="messages" class="messages"><div id="empty" class="empty">输入一条消息，验证 Hub 到浏览器的最小回合。</div></div>
+        <form id="composer"><textarea id="input" aria-label="消息" placeholder="说点什么…" maxlength="4000"></textarea><button id="send" type="submit">发送</button></form>
+      </section>
+      <aside class="panel">
+        <h2>当前连接</h2>
+        <dl>
+          <dt>设备</dt><dd id="device">准备中…</dd>
+          <dt>Hub 状态</dt><dd id="hubState">等待回执</dd>
+          <dt>回合</dt><dd id="turn">—</dd>
+          <dt>输出</dt><dd>浏览器扬声器</dd>
+        </dl>
+        <p class="note">这是首版文本闭环：网页表达直接进入 Hub 的 Persona expression 适配路径，再由 TTS 返回浏览器。它不替代 Cortico 的自然事件决策，也不代表麦克风已验收。</p>
+      </aside>
+    </div>
+  </main>
+  <script>
+    (() => {
+      const els = Object.fromEntries(['messages','empty','composer','input','send','statusDot','statusText','device','hubState','turn'].map(id => [id, document.getElementById(id)]));
+      const deviceId = `browser-${crypto.randomUUID ? crypto.randomUUID().slice(0, 8) : Math.random().toString(16).slice(2, 10)}`;
+      let socket, seq = 0, reconnectTimer, audioContext, audioChain = Promise.resolve(), currentTurn = null;
+      const sessionId = `lan:${crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36)}`;
+      els.device.textContent = deviceId;
+      const setStatus = (text, kind = '') => { els.statusText.textContent = text; els.statusDot.className = `dot ${kind}`; };
+      const addMessage = (who, text, extra = '') => {
+        els.empty?.remove();
+        const row = document.createElement('div'); row.className = `message ${who}`;
+        const label = document.createElement('div'); label.className = 'label'; label.textContent = who === 'user' ? '你' : who === 'solver' ? 'Solver' : '系统';
+        const bubble = document.createElement('div'); bubble.className = 'bubble'; bubble.textContent = text; if (extra) bubble.classList.add(extra);
+        row.append(label, bubble); els.messages.append(row); els.messages.scrollTop = els.messages.scrollHeight;
+      };
+      const wsUrl = () => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
+      const connect = () => {
+        clearTimeout(reconnectTimer); setStatus('连接中…');
+        socket = new WebSocket(wsUrl());
+        socket.addEventListener('open', () => {
+          socket.send(JSON.stringify({v:1, type:'hello', device_id:deviceId, caps:{display:'browser', speaker:true, subtitle:true, media:[]}}));
+          setStatus('已连接', 'good'); els.send.disabled = false;
+        });
+        socket.addEventListener('close', () => { setStatus('已断开', 'bad'); els.send.disabled = true; reconnectTimer = setTimeout(connect, 1800); });
+        socket.addEventListener('error', () => setStatus('连接错误', 'bad'));
+        socket.addEventListener('message', event => { if (typeof event.data === 'string') handleMessage(JSON.parse(event.data)); });
+      };
+      const playPcm = (base64, sampleRate, turn, seqNo, text) => {
+        if (!base64) { if (text) addMessage('solver', text); return; }
+        const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+        const samples = new Int16Array(bytes.buffer, bytes.byteOffset, Math.floor(bytes.byteLength / 2));
+        const ctx = audioContext || (audioContext = new AudioContext());
+        const buffer = ctx.createBuffer(1, samples.length, sampleRate);
+        const channel = buffer.getChannelData(0); for (let i=0; i<samples.length; i++) channel[i] = samples[i] / 32768;
+        audioChain = audioChain.then(() => new Promise(resolve => { const source = ctx.createBufferSource(); source.buffer = buffer; source.connect(ctx.destination); source.onended = () => { receipt(turn, seqNo, 'played', samples.length / sampleRate * 1000); resolve(); }; source.start(); })).catch(() => receipt(turn, seqNo, 'dropped', 0));
+        if (text) addMessage('solver', text);
+      };
+      const receipt = (turn, seqNo, outcome, pcmMs) => { if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({v:1,type:'segment.receipt',turn,seq:seqNo,outcome,reason:outcome,pcm_ms:Math.round(pcmMs),count:1})); };
+      const handleMessage = msg => {
+        if (msg.type === 'body.handoff') { els.hubState.textContent = msg.active_body === deviceId ? '浏览器为当前 Body' : `当前 Body：${msg.active_body || '无'}`; return; }
+        if (msg.type === 'turn.started') { currentTurn = msg.turn; els.turn.textContent = msg.turn; return; }
+        if (msg.type === 'say') { currentTurn = msg.turn; els.turn.textContent = msg.turn; playPcm(msg.pcm_b64, msg.sr, msg.turn, msg.seq, msg.text); return; }
+        if (msg.type === 'render.cue' && msg.text) { addMessage('solver', msg.text); return; }
+        if (msg.type === 'protocol.error') addMessage('system', `${msg.code}: ${msg.message}`, 'error');
+      };
+      els.composer.addEventListener('submit', async event => {
+        event.preventDefault(); const text = els.input.value.trim(); if (!text) return;
+        if (socket?.readyState !== WebSocket.OPEN) { addMessage('system', 'Hub 尚未连接。', 'error'); return; }
+        try { audioContext = audioContext || new AudioContext(); await audioContext.resume(); } catch (_) {}
+        addMessage('user', text); els.input.value = ''; els.send.disabled = true;
+        try {
+          const response = await fetch('/cortico/event', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({v:1,type:'persona.expression',session_id:sessionId,seq:seq++,ts_mono_ms:Math.floor(performance.now()),source:'solver-web',payload:{text}})});
+          const result = await response.json(); if (!response.ok || !result.accepted) throw new Error(result.error || `HTTP ${response.status}`);
+          els.hubState.textContent = '处理中…';
+        } catch (error) { addMessage('system', `发送失败：${error.message}`, 'error'); }
+        finally { els.send.disabled = false; }
+      });
+      els.input.addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); els.composer.requestSubmit(); } });
+      connect();
+    })();
+  </script>
+</body>
+</html>

@@ -311,7 +311,7 @@ Provider 流式 PCM 进入实现前，任务卡必须明确以下边界：
 
 ### 12.1 2026-10-26 正式验收
 
-环境：Hub `0.3.0`（`LAN_HUB_ADDRESS:18100`，计划任务 `Absolute-Solver-Hub`）；Provider 为服务器回环 GPT-SoVITS v2Pro `9880` + 兼容网关 `18080`，`tts-1` / `xxx_trained` / `zh` / `zh` / `wav`；Native Audio Body 为操作者笔记本上的 `absolute-solver-body`（设备 `body-native-b`，`speaker=true`、`media=["pcm16-binary"]`，Windows 原生播放器）。触发路径为 Hub `POST /cortico/event` 的 `persona.expression`，不经浏览器。
+环境：Hub `0.3.0`（生产 LAN Hub，计划任务 `Absolute-Solver-Hub`）；Provider 为服务器回环 GPT-SoVITS v2Pro `9880` + 兼容网关 `18080`，`tts-1` / `xxx_trained` / `zh` / `zh` / `wav`；Native Audio Body 为操作者笔记本上的 `absolute-solver-body`（设备 `body-native-b`，`speaker=true`、`media=["pcm16-binary"]`，Windows 原生播放器）。触发路径为 Hub `POST /cortico/event` 的 `persona.expression`，不经浏览器。
 
 | 验收项 | 结果 | 证据摘要 |
 |---|---|---|

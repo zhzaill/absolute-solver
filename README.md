@@ -1,6 +1,6 @@
 # Absolute Solver
 
-Absolute Solver 是一个部署在可信局域网内、让同一个 Cortico Persona 可从不同设备访问的私人运行时。局域网交互网页是核心入口，Coo、桌面、手机和树莓派应复用同一客户端协议；Cortico 负责 Persona、World、记忆与语义决策，Hub 负责会话/权限/音频路由及设备事实。当前 Native Audio Body 是唯一已有生产音频播放验收的客户端形态；LAN 网页和 Coo/手机/Pi 接入尚未完成。Hub 当前没有中心身份认证，不能直接暴露到公网。
+Absolute Solver 是一个部署在可信局域网内、让同一个 Cortico Persona 可从不同设备访问的私人运行时。局域网交互网页是核心入口，Coo、桌面、手机和树莓派应复用同一客户端协议；Cortico 负责 Persona、World、记忆与语义决策，Hub 负责会话/权限/音频路由及设备事实。首个网页文本闭环位于 Hub 的 `/app`：浏览器注册为 Body，文本经 `persona.expression` 适配路径进入 Hub，再由 TTS 返回浏览器播放和字幕。Coo/手机/Pi 的独立验收仍待完成。Hub 当前没有中心身份认证，不能直接暴露到公网。
 
 ## 当前状态
 
@@ -8,7 +8,7 @@ Absolute Solver 是一个部署在可信局域网内、让同一个 Cortico Pers
 - Native TTS、分段生成与播放、首段先播、打断、active Body handoff、段级回执、整轮预算和 trace 重启恢复已有代码与运行验收证据。
 - ASR Provider 与完整音频经 Hub 的回放链路已验证；实麦人工朗读条件由任务制定者因环境免除，源 WAV 直连 Provider 逐字正确。实麦设备诊断保留为可选补证。
 - 当前测试与计数以 `D:\11\Logs` 的最新验收报告和 `docs/ABSOLUTE_SOLVER_CURRENT_STATE.md` 为准；不要使用历史 README 中的旧测试数字。
-- 远程 Git 仓库为私有仓库。当前没有对外 `v0.3.0` tag 或 Release。
+- 远程 Git 仓库为公开源码仓库。生产运行仍应限制在可信局域网；当前没有 `v0.3.0` tag 或 Release。
 
 测试通过不等于运行证据齐全。凭据轮换、Hub 网络边界、构建哈希、部署回滚和 trace 归档映射仍是长期运行或内部版本标记前的收束项，不构成公开发布计划。
 
@@ -37,6 +37,10 @@ Browser / Coo / Desktop / Phone / Pi ── WebSocket v1 ──> Hub ──> Cor
 当前安全边界：Hub HTTP API 与局域网 WebSocket 尚无中心认证且未加密；不要将 Hub 暴露到公网。历史部署日志中的明文凭据已脱敏，但凭据轮换仍未执行。
 
 主要未完成事项：Provider 流式 PCM、Presence 生命周期审计、凭据轮换、trace 连续性说明，以及可选的机器人实体导航/运动验收。面板和多 Body 不属于当前核心运行时前置条件。
+
+## 最小网页闭环
+
+启动 Hub 后打开 `http://<hub-host>:18100/app`。首轮验证时确保浏览器是唯一连接的 speaker Body，因为 Hub 当前不支持客户端主动切换 active Body。网页会注册为浏览器 Body，发送文本后通过现有 `persona.expression` 适配路径触发 Hub TTS，接收 PCM16 音频并在浏览器扬声器播放，同时显示字幕。浏览器需允许音频播放；第一次发送会唤醒音频上下文。这条路径验证 Hub 与网页 Body 的协议和播放回执，不替代 Cortico 的自然事件到 Persona 决策验收。页面当前没有操作者认证/配对，仅用于受信 LAN 开发验证，不应放入不可信网络。
 
 ## 构建与测试
 

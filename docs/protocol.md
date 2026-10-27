@@ -33,6 +33,7 @@ The Rust types in `src/wire.rs` are the source of truth. Generated schemas must 
 - State endpoint: `GET /state`
 - Turn trace: `GET /turn/{turn}`
 - Monitor snapshot: `GET /monitor.json`
+- Browser client: `GET /app`
 - Adapter probe: `GET /adapters`
 
 JSON media uses base64 PCM16 for compatibility. A body that advertises `media: ["pcm16-binary"]` may use the optional v1 binary media frame described below instead. WebRTC is outside v1.

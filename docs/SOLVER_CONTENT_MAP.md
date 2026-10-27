@@ -42,7 +42,7 @@ Cortico 已有能力按以下方式接入 Solver：
 | QQ | 内建 `qq` World，名单、历史、图片/语音和起草确认门 | 生产 `/api/worlds` 显示 `qq=active`，但连接灯为 error、名单 0；NapCat `127.0.0.1:3001` 未配置/不可用 | 已挂载但通道未接通；不是当前可用入口。重新启用前须确认身份名单与发送确认门 |
 | 桌宠/VTuber TTS | `cortico-world-vtuber`：`outputTap` 捕获 `vtuber_act`、流式/整段合成、VTS 动作、字幕/动作 SSE、`DeviceAudioSink` | 生产未安装/启用该扩展；Cortico TTS 扩展的声卡路径与 Solver Provider `18080`→Native Body 是两条不同路径 | 可复用 Persona 演出语义和 TTS 能力；音频需适配到 Hub，扩展默认本机播放且 SSE 不传音频，不能绕过 active Body |
 | Cortico ASR | `cortico-world-asr` 扩展，RtAudio、能量门限切分、FireRedASR2-AED（以扩展文档为准） | 生产未挂载；当前经 Hub 的 ASR 来自 Solver Provider `9881`，完整 WAV/回放链已有证据 | 可复用；与 Solver Body 麦克风输入尚未形成同一条生产采集链 |
-| Coo/其他客户端 | WebView/浏览器访问 Solver 的统一客户端协议 | 尚无 Coo→Solver 完整运行验收；当前没有 LAN 交互网页 | 目标核心形态，未实现/未验收 |
+| Coo/其他客户端 | WebView/浏览器访问 Solver 的统一客户端协议 | 首个 Hub `/app` 浏览器文本入口已实现待验收；尚无 Coo→Solver 完整运行验收 | 目标核心形态；认证/配对与端到端播放仍待实现/验收 |
 
 ## 一次完整回合的内容流
 

@@ -14,8 +14,10 @@ try { chcp 65001 > $null } catch { }
 $root = $PSScriptRoot
 $exe = Join-Path $root 'target\debug\absolute-solver-mic-monitor.exe'
 $plink = 'C:\Program Files\PuTTY\plink.exe'
-$hostKey = 'SHA256:mi6ruODDjDlZBosOGrVIAJ4UFTIGPYRP11eH4cNLh+M'
-$hubHost = 'LAN_HUB_ADDRESS'
+$hostKey = if ($env:SOLVER_SSH_HOSTKEY) { $env:SOLVER_SSH_HOSTKEY } else { '' }
+$hubHost = if ($env:SOLVER_SSH_HOST) { $env:SOLVER_SSH_HOST } else { '127.0.0.1' }
+$sshUser = if ($env:SOLVER_SSH_USER) { $env:SOLVER_SSH_USER } else { 'solver' }
+$sshKey = $env:SOLVER_SSH_KEY
 $page = 'http://127.0.0.1:18899/'
 $tunnelPort = 19881
 $asrPort = 9881
@@ -46,6 +48,10 @@ if (-not (Test-Path $exe)) {
     exit 1
 }
 
+if (-not $sshKey -or -not $hostKey) {
+    Write-Host '未设置 SOLVER_SSH_KEY/SOLVER_SSH_HOSTKEY；跳过远程 ASR 隧道。' -ForegroundColor Yellow
+}
+
 $env:SOLVER_ASR_URL = "http://127.0.0.1:$tunnelPort"
 $env:SOLVER_RECORD_DIR = 'D:\11\Logs\asr'
 if ($Device -ge 0) { $env:SOLVER_CAPTURE_DEVICE = "$Device" }
@@ -61,11 +67,11 @@ if (Test-Port 18899) {
 $tunnel = $null
 if (-not (Test-Port $tunnelPort)) {
     $serverUp = Test-Port 22 $hubHost 900
-    if ($serverUp -and (Test-Path $plink)) {
+    if ($serverUp -and (Test-Path $plink) -and $sshKey -and $hostKey) {
         Write-Host "建立 ASR 隧道 127.0.0.1:$tunnelPort -> ${hubHost}:$asrPort ..." -ForegroundColor DarkGray
         $tunnel = Start-Process -FilePath $plink -ArgumentList @(
-            '-ssh', '-batch', '-hostkey', $hostKey,
-            '-L', "${tunnelPort}:127.0.0.1:${asrPort}", '-N', "zhzaill@$hubHost"
+            '-ssh', '-batch', '-hostkey', $hostKey, '-i', $sshKey,
+            '-L', "${tunnelPort}:127.0.0.1:${asrPort}", '-N', "${sshUser}@$hubHost"
         ) -PassThru -WindowStyle Hidden
         for ($i = 0; $i -lt 20; $i++) {
             Start-Sleep -Milliseconds 250

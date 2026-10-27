@@ -15,20 +15,20 @@ Absolute Solver 是跨主机实时协作系统：Hub 编排回合、Body 路由�
 
 ## 仓库快照
 
-- 仓库：私有远程 Git 仓库 `https://github.com/zhzaill/absolute-solver`，分支 `main`。
+- 仓库：公开源码仓库 `https://github.com/zhzaill/absolute-solver`，分支 `main`；生产运行仍限可信局域网。
 - 应用版本：Cargo `0.3.0`；当前没有对外发布目标，也没有 `v0.3.0` Release。协作基线文档基于 `af63fad`。
 - 生产 Body 验收基于 `df68252`；Cortico 协作基线则基于 `af63fad`，对应运行快照已按各自证据记录。
 - 最新 CI 的格式、测试、schema 生成和 schema 差异检查全部通过；任务 A 的 Rust 测试为 42 个库、12 个 Body、23 个 Hub。
 
 ## 当前功能定位
 
-Absolute Solver 的目标是：让同一个 Cortico Persona 通过局域网统一入口出现在浏览器、桌面、手机、树莓派和 Coo 上。局域网交互网页和多设备客户端协议是核心功能；Cortico 是 Persona/World/记忆与语义决策层，Hub 是设备会话、权限、音频路由和执行事实权威。它是私人系统，不是公开平台。
+Absolute Solver 的目标是：让同一个 Cortico Persona 通过局域网统一入口出现在浏览器、桌面、手机、树莓派和 Coo 上。局域网交互网页和多设备客户端协议是核心功能；Cortico 是 Persona/World/记忆与语义决策层，Hub 是设备会话、权限、音频路由和执行事实权威。源码现为公开仓库，生产系统仍是可信局域网内的私人部署。
 
-独立运维监控面板、机器人/XuegerOS、VLA、桌面 CUA、Provider 流式 PCM、gRPC 和公开 SDK 都属于可选扩展或实验路线。浏览器、Coo、手机和树莓派的实际音频输出仍需分别验收，不能用 Native Audio Body 的证据代替。当前还没有局域网交互网页，不能把目标写成已部署能力。
+独立运维监控面板、机器人/XuegerOS、VLA、桌面 CUA、Provider 流式 PCM、gRPC 和公开 SDK 都属于可选扩展或实验路线。首个 `/app` 文本客户端已接入开发中，尚未完成浏览器播放、权限和跨设备验收；浏览器、Coo、手机和树莓派的实际音频输出仍需分别验收，不能用 Native Audio Body 的证据代替。
 
 ## 运行快照
 
-2026-10-27 已将任务 A 的 Hub 二进制部署至 `LAN_HUB_ADDRESS:18100`，并接入更新后的生产 Body。验收结束时 Hub 为 `0.3.0`、`idle`、turn 55，`body-production-audio` 在线。Hub SHA256 为 `5CAD35128BCB1FDAC944FE411452FAC025632DF87F65BB754A8D8332B57CF1C7`；Body SHA256 为 `3CA039E7A89CD4D8FAD125880DB3E278E4D7BE397754004CF0700AACFCF0AB03`。部署与回滚记录见 `D:\11\Logs\2026-10-27-tts-segment-receipts-production-deploy.md`。
+2026-10-27 已将任务 A 的 Hub 二进制部署至生产 Hub（LAN 地址从公开文档省略），并接入更新后的生产 Body。验收结束时 Hub 为 `0.3.0`、`idle`、turn 55，`body-production-audio` 在线。Hub SHA256 为 `5CAD35128BCB1FDAC944FE411452FAC025632DF87F65BB754A8D8332B57CF1C7`；Body SHA256 为 `3CA039E7A89CD4D8FAD125880DB3E278E4D7BE397754004CF0700AACFCF0AB03`。部署与回滚记录见本地 `D:\11\Logs\2026-10-27-tts-segment-receipts-production-deploy.md`。
 
 生产 `/monitor.json` 已确认真实 Body 回执：正常分段 `turn=49` 为 2/2 播放并 complete；打断 `turn=54` 在 3 段送达 Body 后被 `turn=55` 打断，Body 回报 1 played、2 skipped/superseded，3/3 complete。验收结束时累计 `segments_played_body=4`、`segments_skipped_body=2`、`segments_dropped_body=0`、`segment_receipts=9`；详见 `D:\11\Logs\2026-10-27-tts-segment-receipts-body-production.md`。Hub 启动恢复发现 trace 第 49、104 行各有一条格式损坏记录，跳过并追加 `trace.recovered` 事件；原 trace 没有清洗或重写。
 
@@ -49,7 +49,7 @@ Absolute Solver 的目标是：让同一个 Cortico Persona 通过局域网统�
 | TTS 段级回执 | accepted；生产正常分段与 Body 队列打断均已实跑验收 | `D:\11\Logs\2026-10-27-tts-segment-receipts.md`、`D:\11\Logs\2026-10-27-tts-segment-receipts-production-deploy.md`、`D:\11\Logs\2026-10-27-tts-segment-receipts-body-production.md` |
 | Cortico 协作边界 | 架构职责已明确；服务已恢复、运行调试中；生产量化未验收（尚无可关联的自然事件样本） | `docs/tasks/2026-10-27-cortico-collaboration-metrics.md`、`D:\11\Logs\2026-10-27-cortico-collaboration-baseline.md`、`D:\11\Logs\2026-10-27-cortico-runtime-debug.md` |
 | Cortico 现有平台能力复用 | 已完成源码/运行边界核对；生产 QQ 已挂载但 NapCat 未连接、名单为空；Cortico ASR/VTuber 扩展未部署 | `docs/SOLVER_CONTENT_MAP.md`、`D:\11\Logs\2026-10-27-Solver-宪法与内容整理.md`、`D:\11\Logs\2026-10-27-Cortico启动与连接.md` |
-| Solver 局域网交互网页 | 未实现；Cortico WebUI 仅监听服务器 `127.0.0.1:7777`，属于管理控制台 | 目标定义见 `docs/SOLVER_CONSTITUTION.md`；不把 Cortico 管理控制台算作设备入口 |
+| Solver 局域网交互网页 | 首个 `/app` 文本客户端已实现，待端到端验收；尚无操作者认证/配对 | Hub `/app`、`src/bin/client.html`；Cortico WebUI 仍仅是管理控制台，不算设备入口 |
 | Provider 流式 PCM | blocked（已完成可行性测量） | `D:\11\Logs\2026-10-27-tts-streaming-pcm-可行性判定.md`；网关缓冲整段响应 |
 | ASR Provider 与 WAV 回放 | verified | `D:\11\Logs\2026-10-26-asr-input-turn.md` |
 | ASR 实麦通路 | accepted（任务制定者环境豁免，2026-10-26） | 完整音频经 Hub 回合、源 WAV 直连 Provider；`D:\11\Logs\2026-10-26-asr-input-turn.md`、`D:\11\Logs\2026-10-26-ASR实麦诊断与录音台.md` |
@@ -84,5 +84,5 @@ ASR 实麦人工朗读条件已由任务制定者因环境免除；完整音频�
 ## 历史事实纠偏
 
 - 线上协议是 WebSocket v1 + 二进制媒体；`docs/WIRE_PROTOCOL_V2.md` 是未采纳设计稿，以 `docs/protocol.md`、`src/wire.rs` 和生成 schema 为准。
-- 生产地址以 `LAN_HUB_ADDRESS` 为准；`LAN_HUB_ADDRESS` 是历史不可达测试地址。
+- 生产 Hub 使用固定 LAN 地址；具体地址保留在操作者本地部署配置中，不进入公开仓库。
 - 2026-10-23 turn 41 与 2026-10-26 turn 18 不能拼成连续生产序列，断点尚待 Release 阻塞项核实。

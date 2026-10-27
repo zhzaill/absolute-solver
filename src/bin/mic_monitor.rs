@@ -8,8 +8,8 @@
 //! Env:
 //!   SOLVER_MONITOR_LISTEN  default 127.0.0.1:18899
 //!   SOLVER_ASR_URL         default http://127.0.0.1:19881
-//!   SOLVER_HUB_HTTP        default http://LAN_HUB_ADDRESS:18100
-//!   SOLVER_HUB_URL         default ws://LAN_HUB_ADDRESS:18100/ws
+//!   SOLVER_HUB_HTTP        default http://127.0.0.1:18100
+//!   SOLVER_HUB_URL         default ws://127.0.0.1:18100/ws
 //!   SOLVER_CAPTURE_DEVICE  `default` or a device index
 //!   SOLVER_RECORD_DIR      default D:\11\Logs\asr
 
@@ -102,9 +102,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let asr_url =
         std::env::var("SOLVER_ASR_URL").unwrap_or_else(|_| "http://127.0.0.1:19881".into());
     let hub_http =
-        std::env::var("SOLVER_HUB_HTTP").unwrap_or_else(|_| "http://LAN_HUB_ADDRESS:18100".into());
+        std::env::var("SOLVER_HUB_HTTP").unwrap_or_else(|_| "http://127.0.0.1:18100".into());
     let hub_ws =
-        std::env::var("SOLVER_HUB_URL").unwrap_or_else(|_| "ws://LAN_HUB_ADDRESS:18100/ws".into());
+        std::env::var("SOLVER_HUB_URL").unwrap_or_else(|_| "ws://127.0.0.1:18100/ws".into());
     let device_selector =
         std::env::var("SOLVER_CAPTURE_DEVICE").unwrap_or_else(|_| "default".into());
     let record_dir = std::env::var("SOLVER_RECORD_DIR")

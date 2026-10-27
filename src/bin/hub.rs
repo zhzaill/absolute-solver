@@ -1312,6 +1312,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/state", get(state))
         .route("/turn/:turn", get(turn))
         .route("/monitor", get(monitor_page))
+        .route("/app", get(client_page))
         .route("/monitor.json", get(monitor_json))
         .route("/adapters", get(adapters_status))
         .route("/cortico/monitor", get(cortico_monitor_status))
@@ -1777,6 +1778,10 @@ async fn monitor_json(State(app): State<AppState>) -> Json<MonitorSnapshot> {
 
 async fn monitor_page() -> impl IntoResponse {
     axum::response::Html(include_str!("monitor.html"))
+}
+
+async fn client_page() -> impl IntoResponse {
+    axum::response::Html(include_str!("client.html"))
 }
 
 async fn cortico_monitor_status(State(app): State<AppState>) -> Json<CorticoMonitorSnapshot> {

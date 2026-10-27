@@ -29,7 +29,7 @@
 历史文档中的勾选项、预测和“已完成”文字不能单独改变当前状态。
 
 `docs/WIRE_PROTOCOL_V2.md` 是未采纳的历史设计稿，不是协议补充规范；线上规则只以 `docs/protocol.md`、`src/wire.rs` 和生成 schema 为准。
-当前不得把 `WIRE_PROTOCOL_V2.md` 当作线上 v2 规范；它是未采纳的历史设计稿。线上仍是 WebSocket v1 增量协议，生产部署地址以 `LAN_HUB_ADDRESS` 为准。
+当前不得把 `WIRE_PROTOCOL_V2.md` 当作线上 v2 规范；它是未采纳的历史设计稿。线上仍是 WebSocket v1 增量协议；生产部署地址保留在操作者本地配置中，不写入公开仓库。
 
 ## 2. 领域要求清单
 
@@ -37,7 +37,7 @@
 
 | 领域 | 主文档 | 当前状态 | 硬要求 |
 |---|---|---|---|
-| 总体架构 | `docs/north-star.md`、`docs/SOLVER_CONSTITUTION.md` | 核心边界已定义；统一 LAN 网页/客户端未实现 | Cortico 持有 Persona 决策；Hub 持有会话、权限与音频路由；网页、Coo、桌面、手机和 Pi 是同一个 Persona 的客户端；每个 turn 一个 active output Body |
+| 总体架构 | `docs/north-star.md`、`docs/SOLVER_CONSTITUTION.md` | 核心边界已定义；首个 LAN 网页文本入口已实现待验收；操作者认证/配对和其他客户端未实现 | Cortico 持有 Persona 决策；Hub 持有会话、权限与音频路由；网页、Coo、桌面、手机和 Pi 是同一个 Persona 的客户端；每个 turn 一个 active output Body |
 | 协议和版本 | `docs/protocol.md`、`src/wire.rs` | 基础完成，兼容性有缺口 | `v=1`、方向明确、媒体有边界、破坏性变化必须升级主版本 |
 | 权限和 Presence | `docs/PRESENCE_INTEGRATION_PLAN.md`、`docs/PRESENCE_CHECKLIST.md` | 协议完成，生产覆盖层部分完成 | 在线不等于权限；权限必须有 scope、TTL、撤销和审计 |
 | 机器人运动安全 | `docs/integrations/xuegeros.md` | 只读和 shadow 基础完成 | VLA/Persona 不得直接写运动；必须经过人工确认、租约、限幅和 watchdog |
