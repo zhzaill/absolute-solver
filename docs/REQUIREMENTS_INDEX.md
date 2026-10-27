@@ -8,6 +8,8 @@
 
 当前 Solver 宪法：`docs/SOLVER_CONSTITUTION.md`。内容归属与 Cortico 接入整理：`docs/SOLVER_CONTENT_MAP.md`。两者是 Absolute Solver 的项目级约束和整理手册，不替代 Cortico Persona 自己的 `CONSTITUTION.md`、`MEMORY` 或 World 契约。
 
+历史工程经验索引：`docs/EXPERIENCE_LEDGER.md`。它回收 `D:\11\Logs` 的有效决策、缺陷根因、验收方法和边界；原始 Logs 仍是运行证据。
+
 当前状态入口：`docs/ABSOLUTE_SOLVER_CURRENT_STATE.md`。该文件只索引代码与 Logs 证据，不能单独宣布完成；最新整理记录为 `D:\11\Logs\2026-10-27-Solver-宪法与内容整理.md`。
 
 ## 1. 文档层级

@@ -12,7 +12,7 @@ Absolute Solver 是一个部署在可信局域网内、让同一个 Cortico Pers
 
 测试通过不等于运行证据齐全。凭据轮换、Hub 网络边界、构建哈希、部署回滚和 trace 归档映射仍是长期运行或内部版本标记前的收束项，不构成公开发布计划。
 
-权威当前快照与证据索引见[当前可信项目现状](docs/ABSOLUTE_SOLVER_CURRENT_STATE.md)；需求入口见[需求索引](docs/REQUIREMENTS_INDEX.md)。运行状态以代码、测试输出和 `D:\11\Logs` 验收证据为准，计划文档不能单独改变状态。
+权威当前快照与证据索引见[当前可信项目现状](docs/ABSOLUTE_SOLVER_CURRENT_STATE.md)；历史工程决策、失败根因和可复用验收经验见[工程经验账本](docs/EXPERIENCE_LEDGER.md)；需求入口见[需求索引](docs/REQUIREMENTS_INDEX.md)。运行状态以代码、测试输出和 `D:\11\Logs` 验收证据为准，计划文档不能单独改变状态。
 
 ## 架构
 
