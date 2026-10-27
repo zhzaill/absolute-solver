@@ -190,6 +190,45 @@ A reply may be split into several `say` frames of one `turn`:
   continues with the remaining segments. If the first segment fails, the whole
   reply degrades to subtitle-only.
 
+### Segment receipts
+
+A body that wants the Hub monitor to show **its** view of playback reports each
+segment outcome:
+
+```json
+{
+  "v": 1,
+  "type": "segment.receipt",
+  "turn": 12,
+  "seq": 2,
+  "outcome": "played",
+  "reason": "played",
+  "pcm_ms": 1180,
+  "count": 1
+}
+```
+
+- Direction: body → Hub only. Receipts never carry PCM or base64 audio.
+- `outcome` is `played`, `skipped` or `dropped`.
+- `reason` is a bounded token from `SEGMENT_RECEIPT_REASONS` (`played`,
+  `no_audio_output`, `superseded`, `playback_error`, `stale_turn`,
+  `turn_changed`, `queue_full`, `interrupt`, `no_metadata`,
+  `metadata_mismatch`). A Hub buckets any other value as `other` instead of
+  rejecting the frame.
+- `pcm_ms` is optional and lets the Hub reconcile playback duration.
+- `count` is optional and defaults to `1`; aggregated drops (for example the
+  buffered segments discarded by an interrupt) report the whole burst in one
+  message so slow-playback semantics cannot amplify message count.
+- Observability only: a receipt must not change send order, concurrency,
+  interrupt handling or `idle` transitions, and the Hub must fall back to its
+  nominal-duration estimate when a body sends none.
+- The Hub counts receipts under `segments_*_body`, never under the hub-side
+  `segments_sent` / `segments_dropped`, so an estimate is never presented as a
+  measurement. Duplicate receipts are idempotent; a receipt for a turn older
+  than the current one is counted as stale and ignored.
+- Compatibility: an older Hub treats `segment.receipt` as an unknown type and
+  ignores it (see `unknown_type`), so a newer body still works against it.
+
 ## Binary Media
 
 Binary frames are enabled only when the body advertises:

@@ -90,6 +90,24 @@ pub enum Message {
     },
     #[serde(rename = "turn.started")]
     TurnStarted { turn: u64 },
+    /// Body→Hub segment receipt. Observability only: it must never change send
+    /// order, concurrency, interrupt handling or `idle` transitions.
+    #[serde(rename = "segment.receipt")]
+    SegmentReceipt {
+        turn: u64,
+        seq: u64,
+        outcome: SegmentOutcome,
+        /// Bounded token from [`SEGMENT_RECEIPT_REASONS`]; the hub buckets
+        /// anything else as `other` instead of rejecting the frame.
+        reason: String,
+        /// Played PCM duration, used to reconcile against `segments_sent`.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pcm_ms: Option<u64>,
+        /// How many segments this receipt covers. Aggregated drops report more
+        /// than one so a burst of discarded segments stays one message.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        count: Option<u32>,
+    },
     #[serde(rename = "protocol.error")]
     ProtocolError {
         code: String,
@@ -101,9 +119,10 @@ pub enum Message {
 impl Message {
     pub fn turn(&self) -> Option<u64> {
         match self {
-            Self::AudioUp { turn, .. } | Self::Say { turn, .. } | Self::SpeechEnd { turn, .. } => {
-                Some(*turn)
-            }
+            Self::AudioUp { turn, .. }
+            | Self::Say { turn, .. }
+            | Self::SpeechEnd { turn, .. }
+            | Self::SegmentReceipt { turn, .. } => Some(*turn),
             Self::RenderCue { turn, .. } => *turn,
             Self::TurnStarted { turn } => Some(*turn),
             Self::SpeechStart { .. }
@@ -116,6 +135,41 @@ impl Message {
             | Self::ProtocolError { .. } => None,
         }
     }
+
+    /// Segment index for messages that report on one segment.
+    pub fn seq(&self) -> Option<u64> {
+        match self {
+            Self::SegmentReceipt { seq, .. } => Some(*seq),
+            _ => None,
+        }
+    }
+}
+
+/// Outcome a body reports for one segment of a `say` stream.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SegmentOutcome {
+    Played,
+    Skipped,
+    Dropped,
+}
+
+/// Every reason token a body may attach to a [`Message::SegmentReceipt`].
+pub const SEGMENT_RECEIPT_REASONS: [&str; 10] = [
+    "played",
+    "no_audio_output",
+    "superseded",
+    "playback_error",
+    "stale_turn",
+    "turn_changed",
+    "queue_full",
+    "interrupt",
+    "no_metadata",
+    "metadata_mismatch",
+];
+
+pub fn is_known_receipt_reason(reason: &str) -> bool {
+    SEGMENT_RECEIPT_REASONS.contains(&reason)
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -253,7 +307,7 @@ pub enum WireDecodeError {
 }
 
 /// Wire names of every message type defined by protocol v1.
-pub const MESSAGE_TYPES: [&str; 13] = [
+pub const MESSAGE_TYPES: [&str; 14] = [
     "hello",
     "audio.up",
     "say",
@@ -266,6 +320,7 @@ pub const MESSAGE_TYPES: [&str; 13] = [
     "presence.grant",
     "presence.revoke",
     "turn.started",
+    "segment.receipt",
     "protocol.error",
 ];
 
@@ -379,6 +434,54 @@ mod tests {
         assert_eq!(json["turn"], 9);
         assert_eq!(message.turn(), Some(9));
         assert_eq!(serde_json::from_value::<Message>(json).unwrap(), message);
+    }
+
+    #[test]
+    fn segment_receipt_round_trips_without_audio() {
+        let message = Message::SegmentReceipt {
+            turn: 12,
+            seq: 3,
+            outcome: SegmentOutcome::Played,
+            reason: "played".into(),
+            pcm_ms: Some(1180),
+            count: None,
+        };
+        let json = serde_json::to_value(&message).unwrap();
+        assert_eq!(json["type"], "segment.receipt");
+        assert_eq!(json["turn"], 12);
+        assert_eq!(json["seq"], 3);
+        assert_eq!(json["outcome"], "played");
+        assert_eq!(json["reason"], "played");
+        assert!(json.get("pcm_b64").is_none(), "receipts must not carry PCM");
+        assert_eq!(message.turn(), Some(12));
+        assert_eq!(message.seq(), Some(3));
+        assert_eq!(serde_json::from_value::<Message>(json).unwrap(), message);
+    }
+
+    #[test]
+    fn segment_receipt_aggregates_drops_and_omits_optional_fields() {
+        let message = Message::SegmentReceipt {
+            turn: 7,
+            seq: 4,
+            outcome: SegmentOutcome::Dropped,
+            reason: "interrupt".into(),
+            pcm_ms: None,
+            count: Some(3),
+        };
+        let json = serde_json::to_value(&message).unwrap();
+        assert_eq!(json["outcome"], "dropped");
+        assert_eq!(json["count"], 3);
+        assert!(json.get("pcm_ms").is_none());
+        assert_eq!(serde_json::from_value::<Message>(json).unwrap(), message);
+    }
+
+    #[test]
+    fn segment_receipt_reasons_are_bounded() {
+        for reason in SEGMENT_RECEIPT_REASONS {
+            assert!(is_known_receipt_reason(reason), "{reason} must be known");
+        }
+        assert!(!is_known_receipt_reason("made_up_reason"));
+        assert!(MESSAGE_TYPES.contains(&"segment.receipt"));
     }
 
     #[test]

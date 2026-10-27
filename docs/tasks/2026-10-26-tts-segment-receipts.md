@@ -4,7 +4,7 @@
 需求来源（建卡时）：用户 2026-10-26 指令「如果需要在 monitor 中显示 Body 侧段播放/丢弃计数，需要新增段级回执协议」；上游任务卡 `docs/tasks/2026-10-26-tts-segmented.md` §9 边界「Body 侧 played/dropped 只在 Body trace」。
 目标：让 Hub 的 `/monitor.json` 能显示**Body 视角**的段播放与段丢弃计数，而不是只有 Hub 自己的 `segments_sent`。
 优先级：P2（观测完整性；不改变播放行为）。
-状态：**planned**（未开始；未建代码、未改协议、未生成 schema）
+状态：**accepted**（2026-10-27；报告 `D:\11\Logs\2026-10-27-tts-segment-receipts.md`）
 
 ## 1. 为什么必须新开协议，而不是猜
 

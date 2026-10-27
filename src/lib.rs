@@ -178,6 +178,7 @@ pub fn trace_event_for_turn(
         Message::PresenceGrant { .. } => ("presence.grant", None),
         Message::PresenceRevoke { .. } => ("presence.revoke", None),
         Message::TurnStarted { .. } => ("turn.started", None),
+        Message::SegmentReceipt { seq, .. } => ("segment.receipt", Some(*seq)),
         Message::ProtocolError { .. } => ("protocol.error", None),
     };
     TraceEvent {

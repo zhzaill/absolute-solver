@@ -16,6 +16,15 @@
         "high"
       ],
       "type": "string"
+    },
+    "SegmentOutcome": {
+      "description": "Outcome a body reports for one segment of a `say` stream.",
+      "enum": [
+        "played",
+        "skipped",
+        "dropped"
+      ],
+      "type": "string"
     }
   },
   "oneOf": [
@@ -407,6 +416,60 @@
       "type": "object"
     },
     {
+      "description": "Body→Hub segment receipt. Observability only: it must never change send order, concurrency, interrupt handling or `idle` transitions.",
+      "properties": {
+        "count": {
+          "description": "How many segments this receipt covers. Aggregated drops report more than one so a burst of discarded segments stays one message.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "outcome": {
+          "$ref": "#/definitions/SegmentOutcome"
+        },
+        "pcm_ms": {
+          "description": "Played PCM duration, used to reconcile against `segments_sent`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "Bounded token from [`SEGMENT_RECEIPT_REASONS`]; the hub buckets anything else as `other` instead of rejecting the frame.",
+          "type": "string"
+        },
+        "seq": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "turn": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "segment.receipt"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome",
+        "reason",
+        "seq",
+        "turn",
+        "type"
+      ],
+      "type": "object"
+    },
+    {
       "properties": {
         "code": {
           "type": "string"
@@ -449,6 +512,7 @@
               "presence.grant",
               "presence.revoke",
               "turn.started",
+              "segment.receipt",
               "protocol.error"
             ]
           },

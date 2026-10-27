@@ -32,7 +32,8 @@ use absolute_solver::{
     state_payload, trace_event_for_turn,
     wire::{
         decode_client_message, BinaryMediaFrame, BinaryMediaKind, HubState, Message,
-        PresenceUrgency, StateName, WireDecodeError, WireEnvelope,
+        PresenceUrgency, SegmentOutcome, StateName, WireDecodeError, WireEnvelope,
+        SEGMENT_RECEIPT_REASONS,
     },
     SharedTrace, TraceWriter,
 };
@@ -144,6 +145,8 @@ struct ConnectionDelivery {
 const MAX_TURN_AUDIO_BYTES: usize = 5 * 1024 * 1024;
 const MEMORY_CONTEXT_LIMIT: usize = 5;
 const MEMORY_CONTEXT_CHARS_PER_ITEM: usize = 600;
+/// How many recent turns keep a per-turn sent/reported reconciliation.
+const TRACKED_RECEIPT_TURNS: usize = 4;
 static HOST_TICKET_SEQ: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, serde::Deserialize)]
@@ -228,6 +231,30 @@ struct Monitor {
     tts_first_say_ms: Option<u64>,
     segments_sent: u64,
     segments_dropped: u64,
+    /// Body view, fed only by `segment.receipt`. Kept separate from the hub-side
+    /// counters above so an estimate is never mistaken for a measurement.
+    segment_receipts: u64,
+    segment_receipts_stale: u64,
+    segment_receipts_duplicate: u64,
+    segment_receipts_invalid: u64,
+    segments_played_body: u64,
+    segments_skipped_body: u64,
+    segments_dropped_body: u64,
+    segment_receipt_reasons: BTreeMap<String, u64>,
+    last_segment_receipt: Option<SegmentReceiptView>,
+    /// Per-turn reconciliation of hub-sent segments against body receipts, so a
+    /// monitor reader can tell "no receipts yet" from "body does not report".
+    /// Mirrors the newest tracked turn in `segment_turns`.
+    segment_receipt_status: Option<TurnReceiptStatus>,
+    /// Receipts whose turn never had a segment sent, or fell out of the tracking
+    /// window; counted so a misbehaving body stays visible instead of silent.
+    segment_receipts_unmatched: u64,
+    #[serde(skip)]
+    segment_turns: BTreeMap<u64, TurnReceiptStatus>,
+    /// Dedupe keys per device: `(turn, seq, count)`. Bounded to the newest turn
+    /// per device so a long-running hub cannot grow this without limit.
+    #[serde(skip)]
+    receipt_seen: BTreeMap<String, BTreeSet<(u64, u64, u32)>>,
     tts_segment_latencies_ms: Vec<u64>,
     say_sent: u64,
     say_undelivered: u64,
@@ -244,6 +271,37 @@ struct DeviceMonitor {
     last_seen_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     caps: Option<serde_json::Value>,
+    /// Segment receipts reported by this body, never by the hub.
+    segments_played_body: u64,
+    segments_skipped_body: u64,
+    segments_dropped_body: u64,
+}
+
+/// Latest body-reported segment outcome. Audio is never retained.
+#[derive(Debug, Clone, Serialize)]
+struct SegmentReceiptView {
+    device: String,
+    turn: u64,
+    seq: u64,
+    outcome: String,
+    reason: String,
+    count: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pcm_ms: Option<u64>,
+    at_ms: u64,
+}
+
+/// How the current turn's sent segments reconcile with body receipts.
+///
+/// `missing` means the body never reported anything, which is exactly what an
+/// older body that predates `segment.receipt` looks like: the turn still
+/// completes and the monitor keeps the estimate instead of claiming a fault.
+#[derive(Debug, Clone, Serialize)]
+struct TurnReceiptStatus {
+    turn: u64,
+    segments_sent: u64,
+    segments_reported: u64,
+    status: &'static str,
 }
 
 /// Latest `say` delivery attempt. Audio payload is never retained, only its size.
@@ -470,6 +528,19 @@ impl Default for Monitor {
             tts_first_say_ms: None,
             segments_sent: 0,
             segments_dropped: 0,
+            segment_receipts: 0,
+            segment_receipts_stale: 0,
+            segment_receipts_duplicate: 0,
+            segment_receipts_invalid: 0,
+            segments_played_body: 0,
+            segments_skipped_body: 0,
+            segments_dropped_body: 0,
+            segment_receipt_reasons: BTreeMap::new(),
+            last_segment_receipt: None,
+            segment_receipt_status: None,
+            segment_receipts_unmatched: 0,
+            segment_turns: BTreeMap::new(),
+            receipt_seen: BTreeMap::new(),
             tts_segment_latencies_ms: Vec::new(),
             say_sent: 0,
             say_undelivered: 0,
@@ -482,7 +553,156 @@ impl Default for Monitor {
     }
 }
 
+fn outcome_label(outcome: SegmentOutcome) -> &'static str {
+    match outcome {
+        SegmentOutcome::Played => "played",
+        SegmentOutcome::Skipped => "skipped",
+        SegmentOutcome::Dropped => "dropped",
+    }
+}
+
+/// Keeps a receipt `reason` a bounded token: anything unexpected collapses into
+/// `other` so a body cannot grow the monitor map without limit.
+fn normalize_receipt_reason(reason: &str) -> &'static str {
+    SEGMENT_RECEIPT_REASONS
+        .iter()
+        .copied()
+        .find(|known| *known == reason)
+        .unwrap_or("other")
+}
+
+fn receipt_status_label(sent: u64, reported: u64) -> &'static str {
+    if sent == 0 {
+        "none"
+    } else if reported == 0 {
+        "missing"
+    } else if reported < sent {
+        "partial"
+    } else {
+        "complete"
+    }
+}
+
 impl Monitor {
+    /// Turns whose segmentation is still reconciled against receipts. A small
+    /// window is enough: a body reports a segment right after playing it, and an
+    /// interrupted turn's receipts legitimately arrive after the next turn began.
+    fn tracked_turn_window(&self) -> Option<u64> {
+        self.segment_turns
+            .keys()
+            .next_back()
+            .copied()
+            .filter(|_| self.segment_turns.len() >= TRACKED_RECEIPT_TURNS)
+            .map(|newest| newest.saturating_sub(TRACKED_RECEIPT_TURNS as u64 - 1))
+    }
+
+    fn refresh_receipt_view(&mut self) {
+        self.segment_receipt_status = self.segment_turns.values().next_back().cloned();
+    }
+
+    /// Records one `say` segment leaving the hub for the given turn.
+    fn note_segment_sent(&mut self, turn: u64) {
+        let status = self
+            .segment_turns
+            .entry(turn)
+            .or_insert_with(|| TurnReceiptStatus {
+                turn,
+                segments_sent: 0,
+                segments_reported: 0,
+                status: "missing",
+            });
+        status.segments_sent += 1;
+        status.status = receipt_status_label(status.segments_sent, status.segments_reported);
+        if let Some(oldest) = self.tracked_turn_window() {
+            self.segment_turns.retain(|tracked, _| *tracked >= oldest);
+        }
+        self.refresh_receipt_view();
+    }
+
+    /// Applies one body-reported segment receipt and returns a verdict token.
+    ///
+    /// Observability only: nothing here may influence send order, concurrency,
+    /// interrupt handling or `idle` transitions. Duplicates are idempotent, and a
+    /// receipt for a turn that never produced segments — or fell out of the
+    /// tracking window — is counted as unmatched instead of polluting the view.
+    fn apply_segment_receipt(
+        &mut self,
+        device: &str,
+        message: &Message,
+        _current_turn: u64,
+    ) -> &'static str {
+        let Message::SegmentReceipt {
+            turn,
+            seq,
+            outcome,
+            reason,
+            pcm_ms,
+            count,
+        } = message
+        else {
+            return "not_a_receipt";
+        };
+        let count = (*count).unwrap_or(1).max(1);
+        let reason = normalize_receipt_reason(reason);
+        self.segment_receipts += 1;
+        self.segment_receipt_reasons
+            .entry(reason.to_owned())
+            .and_modify(|value| *value += 1)
+            .or_insert(1);
+
+        if !self.segment_turns.contains_key(turn) {
+            if let Some(oldest) = self.tracked_turn_window() {
+                if *turn < oldest {
+                    self.segment_receipts_stale += 1;
+                    return "stale turn ignored";
+                }
+            }
+            self.segment_receipts_unmatched += 1;
+            return "turn has no sent segments";
+        }
+        let oldest = self.tracked_turn_window();
+        let seen = self.receipt_seen.entry(device.to_owned()).or_default();
+        // Keep only turns still inside the window so this map cannot grow.
+        if let Some(oldest) = oldest {
+            seen.retain(|(seen_turn, _, _)| *seen_turn >= oldest);
+        }
+        if !seen.insert((*turn, *seq, count)) {
+            self.segment_receipts_duplicate += 1;
+            return "duplicate receipt ignored";
+        }
+
+        let delta = u64::from(count);
+        match outcome {
+            SegmentOutcome::Played => self.segments_played_body += delta,
+            SegmentOutcome::Skipped => self.segments_skipped_body += delta,
+            SegmentOutcome::Dropped => self.segments_dropped_body += delta,
+        }
+        if let Some(status) = self.segment_turns.get_mut(turn) {
+            status.segments_reported = (status.segments_reported + delta).min(status.segments_sent);
+            status.status = receipt_status_label(status.segments_sent, status.segments_reported);
+        }
+        self.refresh_receipt_view();
+        if let Some(device_state) = self.devices.get_mut(device) {
+            device_state.last_seen_ms = wall_ms();
+            match outcome {
+                SegmentOutcome::Played => device_state.segments_played_body += delta,
+                SegmentOutcome::Skipped => device_state.segments_skipped_body += delta,
+                SegmentOutcome::Dropped => device_state.segments_dropped_body += delta,
+            }
+        }
+        self.last_segment_receipt = Some(SegmentReceiptView {
+            device: device.to_owned(),
+            turn: *turn,
+            seq: *seq,
+            outcome: outcome_label(*outcome).to_owned(),
+            reason: reason.to_owned(),
+            count,
+            pcm_ms: *pcm_ms,
+            at_ms: wall_ms(),
+        });
+        "recorded"
+    }
+
     fn push_event(
         &mut self,
         dir: &str,
@@ -536,6 +756,9 @@ impl Monitor {
             Message::PresenceGrant { .. } => ("presence.grant", None, None, 0),
             Message::PresenceRevoke { .. } => ("presence.revoke", None, None, 0),
             Message::TurnStarted { turn } => ("turn.started", Some(*turn), None, 0),
+            Message::SegmentReceipt { turn, seq, .. } => {
+                ("segment.receipt", Some(*turn), Some(*seq), 0)
+            }
             Message::ProtocolError { .. } => ("protocol.error", None, None, 0),
         };
         let turn = turn_override.or(message_turn);
@@ -598,6 +821,9 @@ impl Monitor {
                 connected,
                 last_seen_ms: wall_ms(),
                 caps: None,
+                segments_played_body: 0,
+                segments_skipped_body: 0,
+                segments_dropped_body: 0,
             });
     }
 
@@ -608,6 +834,9 @@ impl Monitor {
                 connected: true,
                 last_seen_ms: wall_ms(),
                 caps: Some(caps),
+                segments_played_body: 0,
+                segments_skipped_body: 0,
+                segments_dropped_body: 0,
             },
         );
     }
@@ -2602,6 +2831,24 @@ async fn handle_socket(socket: WebSocket, hub: Arc<Hub>) {
                     .await;
                 tokio::spawn(process_turn(hub.clone(), turn, pending));
             }
+            Message::SegmentReceipt { turn, .. } => {
+                // Observability only: count it, never let it steer the pipeline.
+                let device = connected_device
+                    .clone()
+                    .unwrap_or_else(|| "unidentified".to_owned());
+                let current_turn = hub.state.lock().await.turn;
+                let verdict = {
+                    let mut monitor = hub.monitor.lock().await;
+                    monitor.apply_segment_receipt(&device, &message, current_turn)
+                };
+                hub.record(
+                    "body->hub",
+                    &message,
+                    Some(turn),
+                    format!("device={device}; {verdict}"),
+                )
+                .await;
+            }
             Message::PresenceDecision { .. } => {
                 handle_presence_decision(&hub, &direct_tx, connected_device.as_deref(), message)
                     .await;
@@ -3370,6 +3617,7 @@ async fn run_segmented_turn(hub: &Arc<Hub>, turn: u64, answer: &str) -> bool {
                     {
                         let mut monitor = hub.monitor.lock().await;
                         monitor.segments_sent += 1;
+                        monitor.note_segment_sent(turn);
                         if !first_say_recorded {
                             monitor.tts_first_say_ms = Some(started.elapsed().as_millis() as u64);
                         }
@@ -4165,6 +4413,139 @@ mod tests {
         server.abort();
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         tokio::fs::remove_file(trace_path).await.unwrap();
+    }
+
+    fn receipt(
+        turn: u64,
+        seq: u64,
+        outcome: SegmentOutcome,
+        reason: &str,
+        count: Option<u32>,
+    ) -> Message {
+        Message::SegmentReceipt {
+            turn,
+            seq,
+            outcome,
+            reason: reason.into(),
+            pcm_ms: None,
+            count,
+        }
+    }
+
+    #[test]
+    fn segment_receipts_keep_the_body_view_separate_from_the_hub_view() {
+        let mut monitor = Monitor::default();
+        monitor.register_device("body-a", serde_json::json!({"speaker": true}));
+        monitor.segments_sent = 3;
+        for _ in 0..3 {
+            monitor.note_segment_sent(5);
+        }
+
+        let played = receipt(5, 0, SegmentOutcome::Played, "played", None);
+        assert_eq!(
+            monitor.apply_segment_receipt("body-a", &played, 5),
+            "recorded"
+        );
+        let skipped = receipt(5, 1, SegmentOutcome::Skipped, "superseded", None);
+        assert_eq!(
+            monitor.apply_segment_receipt("body-a", &skipped, 5),
+            "recorded"
+        );
+        let dropped = receipt(5, 2, SegmentOutcome::Dropped, "interrupt", Some(2));
+        assert_eq!(
+            monitor.apply_segment_receipt("body-a", &dropped, 5),
+            "recorded"
+        );
+
+        // Body view counts segments, including aggregated drops.
+        assert_eq!(monitor.segments_played_body, 1);
+        assert_eq!(monitor.segments_skipped_body, 1);
+        assert_eq!(monitor.segments_dropped_body, 2);
+        assert_eq!(monitor.segment_receipts, 3);
+        assert_eq!(monitor.segment_receipts_duplicate, 0);
+        // Hub view is untouched: an estimate stays an estimate.
+        assert_eq!(monitor.segments_sent, 3);
+        assert_eq!(monitor.segments_dropped, 0);
+        let device = monitor.devices.get("body-a").unwrap();
+        assert_eq!(device.segments_played_body, 1);
+        assert_eq!(device.segments_dropped_body, 2);
+        let last = monitor.last_segment_receipt.as_ref().unwrap();
+        assert_eq!(last.outcome, "dropped");
+        assert_eq!(last.count, 2);
+        assert_eq!(last.reason, "interrupt");
+        // Reported counts are capped at what the hub actually sent.
+        let status = monitor.segment_receipt_status.as_ref().unwrap();
+        assert_eq!(status.turn, 5);
+        assert_eq!(status.segments_sent, 3);
+        assert_eq!(status.segments_reported, 3);
+        assert_eq!(status.status, "complete");
+    }
+
+    #[test]
+    fn segment_receipts_are_idempotent_and_ignore_older_turns() {
+        let mut monitor = Monitor::default();
+        monitor.register_device("body-a", serde_json::json!({}));
+        monitor.note_segment_sent(5);
+        let played = receipt(5, 0, SegmentOutcome::Played, "played", None);
+        assert_eq!(
+            monitor.apply_segment_receipt("body-a", &played, 5),
+            "recorded"
+        );
+        assert_eq!(
+            monitor.apply_segment_receipt("body-a", &played, 5),
+            "duplicate receipt ignored"
+        );
+        assert_eq!(monitor.segments_played_body, 1);
+        assert_eq!(monitor.segment_receipts_duplicate, 1);
+
+        // Advance the tracking window past turn 1, then an old receipt is stale.
+        for turn in 1..=5 {
+            monitor.note_segment_sent(turn);
+        }
+        let stale = receipt(1, 9, SegmentOutcome::Played, "played", None);
+        assert_eq!(
+            monitor.apply_segment_receipt("body-a", &stale, 6),
+            "stale turn ignored"
+        );
+        assert_eq!(monitor.segments_played_body, 1);
+        assert_eq!(monitor.segment_receipts_stale, 1);
+
+        // A turn the hub never sent segments for is unmatched, not counted.
+        let unmatched = receipt(99, 0, SegmentOutcome::Played, "played", None);
+        assert_eq!(
+            monitor.apply_segment_receipt("body-a", &unmatched, 6),
+            "turn has no sent segments"
+        );
+        assert_eq!(monitor.segment_receipts_unmatched, 1);
+        assert_eq!(monitor.segments_played_body, 1);
+
+        // Unknown reasons collapse into a bounded bucket instead of growing it.
+        let odd = receipt(5, 1, SegmentOutcome::Skipped, "not_a_real_reason", None);
+        monitor.apply_segment_receipt("body-a", &odd, 6);
+        assert_eq!(monitor.segment_receipt_reasons.get("other"), Some(&1));
+        assert!(!monitor
+            .segment_receipt_reasons
+            .contains_key("not_a_real_reason"));
+    }
+
+    #[test]
+    fn segment_receipt_status_reports_a_missing_reporter() {
+        let mut monitor = Monitor::default();
+        // Two segments left the hub, the body reported nothing: an older body.
+        monitor.note_segment_sent(7);
+        monitor.note_segment_sent(7);
+        let status = monitor.segment_receipt_status.as_ref().unwrap();
+        assert_eq!(status.turn, 7);
+        assert_eq!(status.segments_sent, 2);
+        assert_eq!(status.segments_reported, 0);
+        assert_eq!(status.status, "missing");
+
+        // One receipt for two segments leaves the reconciliation partial.
+        let played = receipt(7, 0, SegmentOutcome::Played, "played", None);
+        monitor.apply_segment_receipt("body-a", &played, 8);
+        let status = monitor.segment_receipt_status.as_ref().unwrap();
+        assert_eq!(status.segments_reported, 1);
+        assert_eq!(status.status, "partial");
     }
 
     #[tokio::test]

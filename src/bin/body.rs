@@ -13,8 +13,8 @@ use absolute_solver::{
     adapters::decode_wav_pcm16,
     now_ms, trace_event,
     wire::{
-        decode_wire_message, BinaryMediaFrame, BinaryMediaKind, Message, TraceEvent,
-        WireDecodeError, WireEnvelope,
+        decode_wire_message, BinaryMediaFrame, BinaryMediaKind, Message, SegmentOutcome,
+        TraceEvent, WireDecodeError, WireEnvelope,
     },
     TraceWriter,
 };
@@ -298,6 +298,50 @@ struct PendingSay {
     sr: u32,
     text: String,
     mouth: usize,
+    /// Final segment of the turn; drives when a one-shot body may disconnect.
+    last: bool,
+}
+
+/// One segment outcome waiting to be reported to the hub.
+///
+/// Receipts are observability only (`docs/tasks/2026-10-26-tts-segment-receipts.md`):
+/// they never gate playback, and a hub that ignores them must behave exactly as
+/// before. Drops are aggregated into one receipt so a burst stays one message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingReceipt {
+    turn: u64,
+    seq: u64,
+    outcome: SegmentOutcome,
+    reason: &'static str,
+    pcm_ms: Option<u64>,
+    count: u32,
+}
+
+impl PendingReceipt {
+    fn segment(turn: u64, seq: u64, outcome: SegmentOutcome, reason: &'static str) -> Self {
+        Self {
+            turn,
+            seq,
+            outcome,
+            reason,
+            pcm_ms: None,
+            count: 1,
+        }
+    }
+
+    fn dropped_many(turn: u64, seq: u64, reason: &'static str, count: u64) -> Option<Self> {
+        if count == 0 {
+            return None;
+        }
+        Some(Self {
+            turn,
+            seq,
+            outcome: SegmentOutcome::Dropped,
+            reason,
+            pcm_ms: None,
+            count: count.min(u64::from(u32::MAX)) as u32,
+        })
+    }
 }
 
 /// Ordered segment queue for one connection.
@@ -312,6 +356,8 @@ struct SegmentQueue {
     pending_bytes: usize,
     dropped: u64,
     played: u64,
+    /// Drop receipts accumulated by `accept`, drained by the pump.
+    receipts: Vec<PendingReceipt>,
 }
 
 const QUEUE_DEPTH_LIMIT: usize = 32;
@@ -322,6 +368,12 @@ impl SegmentQueue {
     fn accept(&mut self, job: PlayJob) -> Vec<PlayJob> {
         if job.turn < self.turn || (job.turn == self.turn && job.seq < self.next_seq) {
             self.dropped += 1;
+            self.receipts.push(PendingReceipt::segment(
+                job.turn,
+                job.seq,
+                SegmentOutcome::Dropped,
+                "stale_turn",
+            ));
             println!(
                 "dropped stale say turn={} seq={}; current turn={} next_seq={}",
                 job.turn, job.seq, self.turn, self.next_seq
@@ -337,6 +389,12 @@ impl SegmentQueue {
                 );
             }
             self.dropped += stale;
+            self.receipts.extend(PendingReceipt::dropped_many(
+                job.turn,
+                job.seq,
+                "turn_changed",
+                stale,
+            ));
             self.pending.clear();
             self.pending_bytes = 0;
             self.turn = job.turn;
@@ -351,6 +409,12 @@ impl SegmentQueue {
                 || self.pending_bytes.saturating_add(bytes) > QUEUE_BYTE_LIMIT
             {
                 self.dropped += 1;
+                self.receipts.push(PendingReceipt::segment(
+                    job.turn,
+                    job.seq,
+                    SegmentOutcome::Dropped,
+                    "queue_full",
+                ));
                 println!(
                     "queue full ({} segments, {} bytes); dropped turn={} seq={}",
                     self.pending.len(),
@@ -377,6 +441,11 @@ impl SegmentQueue {
     fn depth(&self) -> usize {
         self.pending.len()
     }
+
+    /// Drains the drop receipts accumulated since the last call.
+    fn take_receipts(&mut self) -> Vec<PendingReceipt> {
+        std::mem::take(&mut self.receipts)
+    }
 }
 
 #[derive(Debug)]
@@ -388,6 +457,8 @@ struct PlayJob {
     text: String,
     mouth: usize,
     transport: &'static str,
+    /// Final segment of its turn, so a one-shot body does not leave early.
+    last: bool,
 }
 
 #[derive(Debug)]
@@ -403,6 +474,8 @@ struct PlayEvent {
     error: Option<String>,
     /// The chunk was queued for a turn that has since been superseded.
     superseded: bool,
+    /// Final segment of its turn; a one-shot body waits for this before exiting.
+    last: bool,
 }
 
 /// Owns the blocking playback thread. The thread creates the audio stream (cpal
@@ -458,6 +531,7 @@ impl Player {
                         transport: job.transport,
                         error,
                         superseded,
+                        last: job.last,
                     };
                     if event_tx.blocking_send(event).is_err() {
                         break;
@@ -665,11 +739,17 @@ async fn pump<S>(
     play_say: bool,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
-    S: Stream<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin,
+    S: Sink<WsMessage>
+        + Stream<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>>
+        + Unpin,
+    S::Error: std::error::Error + Send + Sync + 'static,
 {
     let mut pending_meta: Option<PendingSay> = None;
     let mut queue = SegmentQueue::default();
     let mut player = Player::start(play_say);
+    // Highest turn whose final segment has played; a one-shot body exits only
+    // after this, so late segments of a multi-segment reply are not truncated.
+    let mut finished_turn = 0_u64;
     loop {
         tokio::select! {
             frame = socket.next() => {
@@ -699,7 +779,7 @@ where
                             text,
                             media,
                             seg_total,
-                            last: _last,
+                            last,
                         } = &message
                         else {
                             if let Message::RenderCue { turn, kind, .. } = &message {
@@ -710,10 +790,20 @@ where
                                     queue.pending.clear();
                                     queue.pending_bytes = 0;
                                     queue.dropped += dropped as u64;
-                                    player.interrupt(turn.unwrap_or(queue.turn));
+                                    let cue_turn = turn.unwrap_or(queue.turn);
+                                    let seq = queue.next_seq;
+                                    let receipt = PendingReceipt::dropped_many(
+                                        cue_turn,
+                                        seq,
+                                        "interrupt",
+                                        dropped as u64,
+                                    );
+                                    player.interrupt(cue_turn);
                                     println!(
                                         "interrupt cue: dropped {dropped} buffered segment(s); queued chunks are skipped"
                                     );
+                                    send_receipts(socket, trace, receipt.into_iter().collect())
+                                        .await?;
                                 }
                             }
                             trace
@@ -741,6 +831,9 @@ where
                                 sr: *sr,
                                 text: text.clone(),
                                 mouth: mouth.len(),
+                                // A hub that sends no segment fields is a
+                                // single-shot reply: that segment ends the turn.
+                                last: last.unwrap_or(seg_total.is_none()),
                             });
                             continue;
                         }
@@ -763,11 +856,14 @@ where
                             text: text.clone(),
                             mouth: mouth.len(),
                             transport: "json-base64",
+                            last: last.unwrap_or(seg_total.is_none()),
                         };
                         if let Some(path) = output_wav {
                             save_diagnostic_wav(path, &job).await?;
                         }
-                        player.submit(queue.accept(job)).await;
+                        let ready = queue.accept(job);
+                        send_receipts(socket, trace, queue.take_receipts()).await?;
+                        player.submit(ready).await;
                     }
                     WsMessage::Binary(bytes) => {
                         let frame = match BinaryMediaFrame::decode(&bytes) {
@@ -787,6 +883,17 @@ where
                                 "dropped say.audio turn={} seq={} without metadata",
                                 frame.turn, frame.seq
                             );
+                            send_receipts(
+                                socket,
+                                trace,
+                                vec![PendingReceipt::segment(
+                                    frame.turn,
+                                    frame.seq,
+                                    SegmentOutcome::Dropped,
+                                    "no_metadata",
+                                )],
+                            )
+                            .await?;
                             continue;
                         };
                         if metadata.turn != frame.turn || metadata.seq != frame.seq {
@@ -795,6 +902,17 @@ where
                                 "dropped say.audio turn={} seq={}; metadata was turn={} seq={}",
                                 frame.turn, frame.seq, metadata.turn, metadata.seq
                             );
+                            send_receipts(
+                                socket,
+                                trace,
+                                vec![PendingReceipt::segment(
+                                    frame.turn,
+                                    frame.seq,
+                                    SegmentOutcome::Dropped,
+                                    "metadata_mismatch",
+                                )],
+                            )
+                            .await?;
                             continue;
                         }
                         let sr = if metadata.sr == frame.sample_rate {
@@ -814,12 +932,15 @@ where
                             text: metadata.text,
                             mouth: metadata.mouth,
                             transport: "pcm16-binary",
+                            last: metadata.last,
                         };
                         if let Some(path) = output_wav {
                             save_diagnostic_wav(path, &job).await?;
                         }
                         println!("queue depth before turn={} seq={}: {}", job.turn, job.seq, queue.depth());
-                        player.submit(queue.accept(job)).await;
+                        let ready = queue.accept(job);
+                        send_receipts(socket, trace, queue.take_receipts()).await?;
+                        player.submit(ready).await;
                     }
                     WsMessage::Close(_) => return Err("hub closed the websocket".into()),
                     _ => {}
@@ -827,6 +948,12 @@ where
             }
             Some(event) = player.events.recv() => {
                 queue.played += 1;
+                let (outcome, reason) = match (&event.error, event.audible, event.superseded) {
+                    (Some(_), _, _) => (SegmentOutcome::Dropped, "playback_error"),
+                    (None, _, true) => (SegmentOutcome::Skipped, "superseded"),
+                    (None, false, false) => (SegmentOutcome::Skipped, "no_audio_output"),
+                    (None, true, false) => (SegmentOutcome::Played, "played"),
+                };
                 let playback = match (&event.error, event.audible, event.superseded) {
                     (Some(error), _, _) => format!("playback failed: {error}"),
                     (None, _, true) => "skipped (superseded by newer turn)".to_owned(),
@@ -862,7 +989,23 @@ where
                         ),
                     })
                     .await?;
-                if fulfilled(target, event.turn) && queue.depth() == 0 {
+                let receipt = PendingReceipt {
+                    turn: event.turn,
+                    seq: event.seq,
+                    outcome,
+                    reason,
+                    pcm_ms: Some(event.pcm_ms),
+                    count: 1,
+                };
+                // Receipts stay observational: a failed send must not abort
+                // playback, so the error is logged instead of propagated.
+                if let Err(error) = send_receipts(socket, trace, vec![receipt]).await {
+                    eprintln!("segment receipt send failed (ignored): {error}");
+                }
+                if event.last {
+                    finished_turn = finished_turn.max(event.turn);
+                }
+                if fulfilled(target, event.turn) && queue.depth() == 0 && event.turn <= finished_turn {
                     return Ok(());
                 }
             }
@@ -916,6 +1059,38 @@ fn path_components(path: &Path) -> Vec<String> {
     path.components()
         .map(|component| component.as_os_str().to_string_lossy().to_ascii_lowercase())
         .collect()
+}
+
+/// Sends one `segment.receipt` per pending outcome.
+///
+/// The hub treats these as pure observability: an old hub without support
+/// ignores them (`unknown_type` is non-fatal), and playback never depends on
+/// them being delivered.
+async fn send_receipts<S>(
+    socket: &mut S,
+    trace: &absolute_solver::SharedTrace,
+    receipts: Vec<PendingReceipt>,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    S: Sink<WsMessage> + Unpin,
+    S::Error: std::error::Error + Send + Sync + 'static,
+{
+    for receipt in receipts {
+        let message = Message::SegmentReceipt {
+            turn: receipt.turn,
+            seq: receipt.seq,
+            outcome: receipt.outcome,
+            reason: receipt.reason.to_owned(),
+            pcm_ms: receipt.pcm_ms,
+            count: if receipt.count > 1 {
+                Some(receipt.count)
+            } else {
+                None
+            },
+        };
+        send(socket, &message, trace).await?;
+    }
+    Ok(())
 }
 
 /// Writes one diagnostic WAV per segment when `SOLVER_OUTPUT_WAV` is set.
@@ -1152,6 +1327,7 @@ mod tests {
             text: format!("seg-{seq}"),
             mouth: 1,
             transport: "pcm16-binary",
+            last: false,
         }
     }
 
@@ -1179,6 +1355,32 @@ mod tests {
         assert_eq!(queue.dropped, 1);
         assert!(queue.accept(job(1, 3)).is_empty());
         assert_eq!(queue.dropped, 2);
+    }
+
+    #[test]
+    fn queue_reports_drops_as_aggregated_receipts() {
+        let mut queue = super::SegmentQueue::default();
+        assert_eq!(queue.accept(job(2, 0)).len(), 1);
+        // A duplicate of the segment that just played is one dropped receipt.
+        assert!(queue.accept(job(2, 0)).is_empty());
+        let receipts = queue.take_receipts();
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].outcome, super::SegmentOutcome::Dropped);
+        assert_eq!(receipts[0].reason, "stale_turn");
+        assert_eq!(receipts[0].count, 1);
+        // Draining twice must not resend the same drop.
+        assert!(queue.take_receipts().is_empty());
+
+        // Buffered segments dropped by a newer turn collapse into one receipt.
+        assert!(queue.accept(job(2, 2)).is_empty());
+        assert!(queue.accept(job(2, 3)).is_empty());
+        assert_eq!(queue.accept(job(3, 0)).len(), 1);
+        let receipts = queue.take_receipts();
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].reason, "turn_changed");
+        assert_eq!(receipts[0].outcome, super::SegmentOutcome::Dropped);
+        assert_eq!(receipts[0].count, 2);
+        assert_eq!(receipts[0].turn, 3);
     }
 
     #[test]
