@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Downgraded the TTS client to a plain OpenAI remote endpoint: `synthesize` now sends only `model`/`input`/`voice`/`response_format` and authenticates with `SOLVER_TTS_API_KEY` (`Authorization: Bearer`), so the Hub no longer knows anything about GPT-SoVITS.
+- Removed `SOLVER_TTS_TEXT_LANG` / `SOLVER_TTS_PROMPT_LANG` and their `monitor.json` fields; text language is inferred provider-side from the input.
+- The TTS provider behind `SOLVER_TTS_URL` is now the LAN-facing TTS Service v2 (OpenAI-compatible API, `sk-` client keys, admin console) instead of a loopback-only gateway.
 - Added optional `segment.receipt` (body → hub): a body reports `played`/`skipped`/`dropped` per segment with a bounded `reason`, optional `pcm_ms`, and an optional `count` so a discarded burst stays one message. Audio never travels in a receipt, and playback never depends on one being delivered.
 - The Hub now keeps the body's view (`segments_played_body`, `segments_skipped_body`, `segments_dropped_body`, per-device counters, `last_segment_receipt`) separate from its own estimate (`segments_sent`, `segments_dropped`), plus a per-turn `segment_receipt_status` (`none`/`missing`/`partial`/`complete`) so "no receipts yet" is distinguishable from "this body never reports". Duplicates are idempotent, turns outside a four-turn window count as stale, and a receipt for a turn that never produced segments counts as unmatched.
 - Fixed a truncated reply: a one-shot body (WAV replay or microphone capture) left after the first segment finished, so later segments and their receipts were never produced. `say.last` now propagates to the playback event and the body exits only after the turn's final segment plays.

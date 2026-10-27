@@ -48,7 +48,7 @@
 
 | 领域 | 主文档 | 当前状态 | 硬要求 |
 |---|---|---|---|
-| TTS | `docs/TTS_REQUIREMENTS.md` | Native Audio Body 闭环完成（2026-10-26 实跑验收，报告 `D:\11\Logs\2026-10-26-Absolute-Solver-TTS正式验收.md`）；局域网网页/其他客户端输出待验收 | Hub 调 API，解码 PCM16，按客户端能力发送；Native Audio Body 是当前唯一已验收播放端，浏览器不能直接继承该证据 |
+| TTS | `docs/TTS_REQUIREMENTS.md` | Native Audio Body 闭环完成（2026-10-26 实跑验收，报告 `D:\11\Logs\2026-10-26-Absolute-Solver-TTS正式验收.md`）；TTS Provider 已降级为局域网 OpenAI 远程服务（2026-10-27，报告 `D:\11\Logs\2026-10-27-tts-openai-remote-service.md`）；局域网网页/其他客户端输出待验收 | Hub 调 API，解码 PCM16，按客户端能力发送；Native Audio Body 是当前唯一已验收播放端，浏览器不能直接继承该证据 |
 | ASR/语音输入 | `docs/protocol.md`、`src/adapters.rs`、`src/bin/body.rs` | 任务制定者因环境（耳机麦电平不足、平时不使用语音输入）免除实麦人工朗读条件（2026-10-26）；验收依据为完整音频经 Hub 回合和源 WAV 直连 Provider 逐字转写，状态 accepted；设备可选 | ASR Provider 可探测，音频受限、可审计，失败时文本/字幕降级；采集设备必须可指定（`SOLVER_CAPTURE_DEVICE`）并在低电平时显式告警 |
 | LLM 回合 | `docs/protocol.md`、`src/bin/hub.rs` | 基础完成 | Hub 管理 turn、预算、超时、降级和 trace；模型不拥有会话权威 |
 | Cortico 协作 | `docs/north-star.md`、`src/cortico.rs`、`src/bin/hub.rs` | 边界已定义；Cortico 服务已恢复，运行稳定性观察中；生产量化未验收，缺少 World 输入到 Persona 决策的因果关联 ID | Cortico 持有 Persona 决策；Hub 持有 turn、权限、路由和降级；事件是低信任数据，不得覆盖系统/项目规则、用户规则或授权；工具动作必须有回执；silence 是有效决策 |

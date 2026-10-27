@@ -18,8 +18,7 @@ pub struct AdapterConfig {
     pub llm_max_requests: u32,
     pub tts_model: String,
     pub tts_voice: String,
-    pub tts_text_lang: String,
-    pub tts_prompt_lang: String,
+    pub tts_api_key: String,
     pub tts_timeout_seconds: u64,
 }
 
@@ -76,8 +75,7 @@ impl Default for AdapterConfig {
                 .max(1),
             tts_model: env::var("SOLVER_TTS_MODEL").unwrap_or_else(|_| "tts-1".into()),
             tts_voice: env::var("SOLVER_TTS_VOICE").unwrap_or_else(|_| "xxx_trained".into()),
-            tts_text_lang: env::var("SOLVER_TTS_TEXT_LANG").unwrap_or_else(|_| "zh".into()),
-            tts_prompt_lang: env::var("SOLVER_TTS_PROMPT_LANG").unwrap_or_else(|_| "zh".into()),
+            tts_api_key: env::var("SOLVER_TTS_API_KEY").unwrap_or_default(),
             tts_timeout_seconds: env::var("SOLVER_TTS_TIMEOUT_SECONDS")
                 .ok()
                 .and_then(|value| value.parse().ok())
@@ -419,7 +417,9 @@ impl ModelAdapters {
         if self.config.tts_url.trim().is_empty() {
             return Err(AdapterError::NotConfigured("tts"));
         }
-        let response = self
+        // 纯 OpenAI 形态：只发 model/input/voice/response_format。语言由 Provider 侧
+        // 按文本推断（见 TTS_REQUIREMENTS §3），Hub 不再夹带 GPT-SoVITS 专有字段。
+        let mut request = self
             .client
             .post(format!(
                 "{}/v1/audio/speech",
@@ -429,13 +429,15 @@ impl ModelAdapters {
                 "model": self.config.tts_model,
                 "input": text,
                 "voice": self.config.tts_voice,
-                "response_format": "wav",
-                "text_lang": self.config.tts_text_lang,
-                "prompt_lang": self.config.tts_prompt_lang
+                "response_format": "wav"
             }))
             .timeout(std::time::Duration::from_secs(
                 self.config.tts_timeout_seconds,
-            ))
+            ));
+        if !self.config.tts_api_key.trim().is_empty() {
+            request = request.bearer_auth(self.config.tts_api_key.trim());
+        }
+        let response = request
             .send()
             .await
             .map_err(|error| AdapterError::Request("tts", error.to_string()))?;
@@ -607,11 +609,18 @@ mod tests {
         )
     }
 
-    async fn mock_tts(Json(body): Json<Value>) -> Response<Body> {
+    async fn mock_tts(headers: axum::http::HeaderMap, Json(body): Json<Value>) -> Response<Body> {
         assert_eq!(body["model"], "tts-1");
         assert_eq!(body["voice"], "xxx_trained");
-        assert_eq!(body["text_lang"], "zh");
-        assert_eq!(body["prompt_lang"], "en");
+        assert_eq!(body["response_format"], "wav");
+        assert!(
+            body.get("text_lang").is_none() && body.get("prompt_lang").is_none(),
+            "hub must not send GPT-SoVITS specific language fields: {body}"
+        );
+        assert_eq!(
+            headers[axum::http::header::AUTHORIZATION],
+            "Bearer tts-test-secret"
+        );
         Response::builder()
             .header("content-type", "audio/wav")
             .body(Body::from(pcm16_wav(&[1, 2, 3, 4], 32_000)))
@@ -649,8 +658,7 @@ mod tests {
             llm_max_requests: 4,
             tts_model: "tts-1".into(),
             tts_voice: "xxx_trained".into(),
-            tts_text_lang: "zh".into(),
-            tts_prompt_lang: "en".into(),
+            tts_api_key: "tts-test-secret".into(),
             tts_timeout_seconds: 45,
         })
         .unwrap();

@@ -2063,8 +2063,6 @@ async fn adapters_status(State(app): State<AppState>) -> Json<serde_json::Value>
             "asr_timeout_seconds": app.hub.adapters.config().asr_timeout_seconds,
             "tts_model": app.hub.adapters.config().tts_model,
             "tts_voice": app.hub.adapters.config().tts_voice,
-            "tts_text_lang": app.hub.adapters.config().tts_text_lang,
-            "tts_prompt_lang": app.hub.adapters.config().tts_prompt_lang,
             "tts_timeout_seconds": app.hub.adapters.config().tts_timeout_seconds,
         },
         "llm_budget": {
@@ -4662,8 +4660,7 @@ mod tests {
             llm_max_requests: 32,
             tts_model: "tts-1".into(),
             tts_voice: "mock-voice".into(),
-            tts_text_lang: "zh".into(),
-            tts_prompt_lang: "en".into(),
+            tts_api_key: String::new(),
             tts_timeout_seconds: 45,
         })
         .unwrap()

@@ -43,6 +43,18 @@
 
 Provider 侧流式 PCM 已完成可行性测量，但实现任务当前为 `blocked`。同一文本、同一音色下，直连 Provider (`streaming_mode=3`) 首块 966 ms / 总时长 4054 ms，首块/总时长 0.238，末 100 ms 内到达 0/28 块；经线上网关 (`stream=true`) 首块 3221 ms / 总时长 3227 ms，首块/总时长 0.998，末 100 ms 内到达 7/7 块。网关 `gateway.py:388-404` 收齐整段后才返回，导致假流式。分段 WAV 与 Provider 流式 PCM 是不同能力；解除阻塞前不得在 Hub 侧叠加第二套切片逻辑。证据与顺序见 `D:\11\Logs\2026-10-27-tts-streaming-pcm-可行性判定.md`。
 
+### 0.2 TTS 服务 v2：局域网 OpenAI 远程服务（2026-10-27）
+
+原本的 TTS 网关已升级为独立的局域网服务（`gateway.py` v2.0.0，仓库 `D:\11\Projects\absolute-solver-tts\gateway\`）：
+
+- 监听 `0.0.0.0:18080`，提供 OpenAI 兼容接口（`/v1/audio/speech`、`/v1/models`、`/v1/audio/voices`）与公开的 `/healthz`；
+- 客户端鉴权是多把可停用的 `sk-` 密钥；配置界面走独立管理员口令，两者权限分离；
+- 浏览器配置界面：音色增删改与试听、客户端密钥、服务设置、上游进程、最近请求、接入示例；
+- Hub 侧同步降级为纯 OpenAI 远程客户端：请求体只保留 `model`/`input`/`voice`/`response_format`，移除 `text_lang`/`prompt_lang`，新增 `SOLVER_TTS_API_KEY`。
+
+生产验证（2026-10-27）：LAN 直连 401/200 鉴权、183 KB WAV 合成、Hub `tts_ok=1` 250,880 B PCM16。
+证据见 `D:\11\Logs\2026-10-27-tts-openai-remote-service.md`。
+
 ## 1. 目标
 
 建立一条不依赖浏览器页面的正式语音输出链路：
@@ -117,32 +129,31 @@ Body 负责：
 
 ## 3. TTS Provider API
 
-正式请求使用 OpenAI 兼容接口：
+正式请求使用 OpenAI 兼容接口，Hub 侧只认"远程 OpenAI 端点"这一种形态：
 
 ```http
 POST {SOLVER_TTS_URL}/v1/audio/speech
+Authorization: Bearer {SOLVER_TTS_API_KEY}
 Content-Type: application/json
 ```
 
-请求体至少包含：
+请求体只包含 OpenAI 标准字段：
 
 ```json
 {
   "model": "tts-1",
   "input": "要合成的文本",
   "voice": "xxx_trained",
-  "response_format": "wav",
-  "text_lang": "zh",
-  "prompt_lang": "zh"
+  "response_format": "wav"
 }
 ```
 
 要求：
 
 - `input` 使用 Hub 最终确定的回答文本；
-- 中文音色默认 `text_lang=zh`、`prompt_lang=zh`；
+- Hub 不发送 `text_lang` / `prompt_lang`；语言由 Provider 按文本推断（TTS 服务 v2 的 `auto_text_lang`），需要固定语言时由 Provider 侧音色配置决定；
 - 当前 `response_format` 固定为 `wav`；分段路径是多个独立 WAV 请求，Provider 侧 PCM 流式接口仍未开始，不得把分段 WAV 响应当作流式输出；
-- HTTP 非 2xx 必须视为合成失败；
+- HTTP 非 2xx 必须视为合成失败（含 401 密钥无效、429 并发已满）；
 - 成功响应必须经过 WAV 解码校验，不能仅依据 HTTP 200 判定成功；
 - 预期音频为单声道、PCM、16 bit，采样率以响应实际值为准；
 - Provider 不可达、超时、返回非法 WAV 时，Hub 必须进入文本/字幕降级。
@@ -151,14 +162,17 @@ Content-Type: application/json
 
 ```text
 SOLVER_TTS_URL=http://127.0.0.1:18080
+SOLVER_TTS_API_KEY=sk-...（TTS 服务 v2 起必填）
 SOLVER_TTS_MODEL=tts-1
 SOLVER_TTS_VOICE=xxx_trained
-SOLVER_TTS_TEXT_LANG=zh
-SOLVER_TTS_PROMPT_LANG=zh
 SOLVER_TTS_TIMEOUT_SECONDS=45
 ```
 
-如果 Provider 位于另一台机器，必须使用受控隧道或内网服务地址；不得为了 TTS 将 GPT-SoVITS 直接暴露到局域网。
+`SOLVER_TTS_TEXT_LANG` / `SOLVER_TTS_PROMPT_LANG` 已于 TTS 服务 v2 移除，不再读取。
+
+TTS Provider 的实际实现是 TTS 服务 v2（`D:\11\Projects\absolute-solver-tts\gateway\`）：一个绑定
+`0.0.0.0:18080` 的局域网服务，OpenAI 兼容接口 + 浏览器配置界面 + 上游 GPT-SoVITS 托管，客户端用
+`sk-` 密钥调用。GPT-SoVITS 本体（`9880`）仍然只监听回环地址，任何客户端都不得直连它。
 
 ## 4. Hub 音频协议
 
@@ -204,8 +218,9 @@ Hub 到 Body 的正式输出使用现有协议 `docs/protocol.md`：
 
 ## 7. 安全要求
 
-- TTS Provider 默认只监听服务器回环地址；
-- 不把 Provider 管理接口暴露给浏览器或局域网客户端；
+- GPT-SoVITS 上游（9880）只监听服务器回环地址，不得对外；
+- 对外暴露的只有 TTS 服务（默认 `0.0.0.0:18080`）：客户端调用必须携带 `sk-` 密钥，配置界面必须走独立管理员口令；
+- 配置界面（`/admin`）与客户端密钥权限分离：客户端密钥不能读写配置；管理接口的写操作要求会话 Cookie 加自定义请求头；
 - Body 只能接收 Hub 授权的输出；
 - Persona、World、模型和 DSH 不得直接指定任意扬声器；
 - trace、日志和监视器不得写入完整 PCM、Base64 音频或敏感文本 payload；
