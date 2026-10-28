@@ -17,6 +17,7 @@
     .dot.good { background:var(--good); }
     .dot.bad { background:var(--coral); }
     .layout { display:grid; grid-template-columns:minmax(0,1fr) 280px; gap:18px; margin-top:18px; }
+    .projection-state { min-height:92px; margin:18px 18px 0; padding:16px; display:flex; align-items:center; justify-content:center; border:1px solid var(--line); border-radius:8px; color:var(--muted); background:#f5f8fa; text-align:center; }
     .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; }
     .conversation { min-height:560px; display:flex; flex-direction:column; overflow:hidden; }
     .messages { flex:1; padding:18px; overflow:auto; }
@@ -51,6 +52,7 @@
     </header>
     <div class="layout">
       <section class="panel conversation" aria-label="对话">
+        <div id="projectionState" class="projection-state" role="status">Coo 服务投影未接入</div>
         <div id="messages" class="messages"><div id="empty" class="empty">输入一条消息，验证 Hub 到浏览器的最小回合。</div></div>
         <form id="composer"><textarea id="input" aria-label="消息" placeholder="说点什么…" maxlength="4000"></textarea><button id="send" type="submit">发送</button></form>
       </section>
@@ -108,7 +110,7 @@
         if (msg.type === 'body.handoff') { els.hubState.textContent = msg.active_body === deviceId ? '浏览器为当前 Body' : `当前 Body：${msg.active_body || '无'}`; return; }
         if (msg.type === 'turn.started') { currentTurn = msg.turn; els.turn.textContent = msg.turn; return; }
         if (msg.type === 'say') { currentTurn = msg.turn; els.turn.textContent = msg.turn; playPcm(msg.pcm_b64, msg.sr, msg.turn, msg.seq, msg.text); return; }
-        if (msg.type === 'render.cue' && msg.text) { addMessage('solver', msg.text); return; }
+        if (msg.type === 'render.cue') { if (msg.text) addMessage('solver', msg.text); return; }
         if (msg.type === 'protocol.error') addMessage('system', `${msg.code}: ${msg.message}`, 'error');
       };
       els.composer.addEventListener('submit', async event => {

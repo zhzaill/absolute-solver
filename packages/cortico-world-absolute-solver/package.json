@@ -1,7 +1,7 @@
 {
   "name": "cortico-world-absolute-solver",
-  "version": "0.1.0",
-  "description": "Cortico World for the Absolute Solver LAN service directory.",
+  "version": "0.2.1",
+  "description": "Cortico World showing the Absolute Solver LAN projection page, usage guidance, and service directory.",
   "license": "MIT",
   "repository": {
     "type": "git",

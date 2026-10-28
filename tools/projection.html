@@ -3,37 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Absolute Solver</title>
+  <title>Absolute Solver 服务目录</title>
   <link rel="stylesheet" href="/projection.css">
   <script defer src="/projection.js"></script>
 </head>
 <body>
   <header>
-    <div class="brand"><span class="brand-mark" aria-hidden="true">AS</span><div><p class="eyebrow">LAN RUNTIME</p><h1>Absolute Solver</h1></div></div>
-    <div class="header-state"><span class="state-dot"></span><span id="host-label">连接 Host…</span></div>
+    <div><p class="eyebrow">ABSOLUTE SOLVER</p><h1>服务目录</h1><p id="host-label">正在连接 Host…</p></div>
+    <a href="/" target="_blank" rel="noreferrer">打开 Coo 原生桌宠</a>
   </header>
-  <nav aria-label="主视图">
-    <button class="tab active" type="button" data-view="services" aria-selected="true">服务</button>
-    <button class="tab" type="button" data-view="pet" aria-selected="false">桌宠</button>
-    <button class="tab" type="button" data-view="chat" aria-selected="false">对话</button>
-    <time id="updated-at"></time>
-  </nav>
   <main>
-    <section id="view-services" class="view active" aria-labelledby="services-title">
-      <div class="section-head"><div><h2 id="services-title">运行服务</h2><p id="refresh-state" role="status">正在检查</p></div><button id="refresh" class="icon-button" type="button" title="刷新状态" aria-label="刷新状态">↻</button></div>
-      <div class="table-wrap"><table>
-        <thead><tr><th>服务</th><th>Host / 地址</th><th>状态</th><th>版本</th><th>能力</th><th>入口</th></tr></thead>
-        <tbody id="services"><tr><td colspan="6">正在读取服务目录</td></tr></tbody>
-      </table></div>
-    </section>
-    <section id="view-pet" class="view" aria-labelledby="pet-title">
-      <div class="section-head"><div><h2 id="pet-title">Coo 桌宠</h2><p id="pet-state">等待原服务连接</p></div><a id="open-coo" class="text-link" href="/coo/pet" target="_blank" rel="noreferrer">单独打开</a></div>
-      <iframe id="pet-frame" title="Coo 桌宠" loading="lazy" referrerpolicy="no-referrer"></iframe>
-    </section>
-    <section id="view-chat" class="view" aria-labelledby="chat-title">
-      <div class="section-head"><div><h2 id="chat-title">对话</h2><p>由 Cortico 处理，语音通过 Hub 与当前 Body 输出</p></div><a id="open-chat" class="text-link" href="/hub/app" target="_blank" rel="noreferrer">单独打开</a></div>
-      <iframe id="chat-frame" title="Absolute Solver 对话与语音" loading="lazy" referrerpolicy="no-referrer"></iframe>
-    </section>
+    <div class="section-head"><p id="refresh-state">正在检查</p><button id="refresh" type="button">刷新</button></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>服务</th><th>Host / 地址</th><th>状态</th><th>版本</th><th>能力</th><th>入口</th></tr></thead>
+      <tbody id="services"><tr><td colspan="6">正在读取服务目录</td></tr></tbody>
+    </table></div>
+    <p class="note">桌宠、打字、语音输入、气泡、动作和 TTS 播放均由 Coo 原页面负责；本页只显示服务健康状态。</p>
   </main>
 </body>
 </html>

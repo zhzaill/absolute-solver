@@ -31,6 +31,7 @@
 - **可选协议增量优先向后兼容。** `seg_total`、`last` 等可选字段在 v1 中扩展；未知 `type` 非致命并保持连接，已知 type 字段非法与未知 type 应区分。schema 必须由 generator 重生成并做差异检查。
 - **排查必须拿原始字节或真实运行现象。** 配置、HTTP 状态和设备名不是端到端成功证据；确认内容要看 WAV 头/PCM 参数/回执，需要时查看字节、源日志或实际听感，而不是继续从文件名推断。
 - **最小网页闭环先验证协议和 Body 路由。** `/app` 以浏览器注册为 Body，文本通过受控的 `persona.expression` 适配路径进入 Hub；即使 TTS 未配置，也必须明确收到字幕降级而不是伪造音频成功。真实 TTS、操作者配对和 Cortico 自然事件因果链分别验收。
+- **桌宠必须复用服务和运行时。** Coo 的 `cortico-world-desktop-pet` 由 `figure.json` 声明 `expression`/`motion` vocab，经 `pet_say`/`pet_act` 解析后调用真实 body `do(word)`；Coo `/pet` 还负责加载 `figure-frame`、形象资源、World 状态和自己的 WebSocket。Solver `render.cue` 可以作为桥接输入，但自绘模型、CSS 动画或静态截图都不等于 Coo 服务投影。正确接入是桌面侧 Body/投影桥连接 Hub，复用 Coo renderer，同时把 PCM 播放和 `segment.receipt` 留在 Solver 路由。
 
 ## 3. TTS：从一段音频到真实播放事实
 

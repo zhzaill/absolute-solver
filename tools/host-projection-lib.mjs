@@ -53,7 +53,7 @@ export function rewriteCooCsp(policy, projectionHost) {
       continue;
     }
     if (name === 'connect-src') {
-      updated.push([name, ...sources.filter((source) => !["'self'", "'none'"].includes(source) && !/^(ws|wss):\/\/(127\.0\.0\.1|localhost)/i.test(source)), "'self'", `ws://${projectionHost}`]);
+      updated.push([name, ...sources.filter((source) => !["'self'", "'none'"].includes(source) && !/^(ws|wss):\/\/(127\.0\.0\.1|localhost)/i.test(source)), "'self'", `ws://${projectionHost}`, `wss://${projectionHost}`]);
       hasConnect = true;
       continue;
     }
@@ -63,7 +63,7 @@ export function rewriteCooCsp(policy, projectionHost) {
     }
     updated.push([name, ...sources.filter((source) => source !== "'none'")]);
   }
-  if (!hasConnect) updated.push(['connect-src', "'self'", `ws://${projectionHost}`]);
+  if (!hasConnect) updated.push(['connect-src', "'self'", `ws://${projectionHost}`, `wss://${projectionHost}`]);
   return updated.map((parts) => parts.join(' ')).join('; ');
 }
 

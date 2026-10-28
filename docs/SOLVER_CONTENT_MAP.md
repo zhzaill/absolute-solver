@@ -42,7 +42,7 @@ Cortico 已有能力按以下方式接入 Solver：
 | QQ | 内建 `qq` World，名单、历史、图片/语音和起草确认门 | 生产 `/api/worlds` 显示 `qq=active`，但连接灯为 error、名单 0；NapCat `127.0.0.1:3001` 未配置/不可用 | 已挂载但通道未接通；不是当前可用入口。重新启用前须确认身份名单与发送确认门 |
 | 桌宠/VTuber TTS | `cortico-world-vtuber`：`outputTap` 捕获 `vtuber_act`、流式/整段合成、VTS 动作、字幕/动作 SSE、`DeviceAudioSink` | 生产未安装/启用该扩展；Cortico TTS 扩展的声卡路径与 Solver Provider `18080`→Native Body 是两条不同路径 | 可复用 Persona 演出语义和 TTS 能力；音频需适配到 Hub，扩展默认本机播放且 SSE 不传音频，不能绕过 active Body |
 | Cortico ASR | `cortico-world-asr` 扩展，RtAudio、能量门限切分、FireRedASR2-AED（以扩展文档为准） | 生产未挂载；当前经 Hub 的 ASR 来自 Solver Provider `9881`，完整 WAV/回放链已有证据 | 可复用；与 Solver Body 麦克风输入尚未形成同一条生产采集链 |
-| Coo/其他客户端 | WebView/浏览器访问 Solver 的统一客户端协议 | 首个 Hub `/app` 浏览器文本入口已实现待验收；尚无 Coo→Solver 完整运行验收 | 目标核心形态；认证/配对与端到端播放仍待实现/验收 |
+| Coo/其他客户端 | Coo `/pet` 原服务、`figure-frame` sandbox renderer、原生 `/socket`、桌宠菜单/打字/语音输入和 World 动作词表；Solver WebSocket v1 Body | LAN 根入口同源代理 Coo 原 `/pet`；`/socket` 双向透传原页面协议；`/api/coo/audio` 与 `/api/coo/blob` 让当前浏览器消费新 `tts.voice` 附件；`/services` 只读显示服务健康 | Coo Persona、会话、工具、权限、桌宠交互和 TTS 合成仍由 Cortico/Coo 保持；第二设备和 LAN 配对仍待验收；不复制 Coo renderer 或动作词表 |
 
 ## 一次完整回合的内容流
 
@@ -77,4 +77,6 @@ QQ / Coo / 浏览器 / 树莓派输入
 4. 让 Coo、浏览器、手机和树莓派复用同一客户端协议，不分别实现 ASR/LLM/TTS。
 5. 用一条可复核回合验收“输入 → Persona 决策 → 表达 → TTS → Body 回执”。
 6. 在这条链稳定前，不扩展机器人、VLA、gRPC 或第二套记忆系统。
+
+Coo 桌宠服务投影的边界和桥接缺口见 `docs/integrations/coo-render-contract.md`。Coo `/pet` 是实际页面和运行时；静态模型、自绘 CSS、动作词映射都不等于投影原服务。
 

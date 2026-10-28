@@ -48,13 +48,20 @@
 
 | 领域 | 主文档 | 当前状态 | 硬要求 |
 |---|---|---|---|
-| TTS | `docs/TTS_REQUIREMENTS.md` | Native Audio Body 闭环完成（2026-10-26 实跑验收，报告 `D:\11\Logs\2026-10-26-Absolute-Solver-TTS正式验收.md`）；TTS Provider 已降级为局域网 OpenAI 远程服务（2026-10-27，报告 `D:\11\Logs\2026-10-27-tts-openai-remote-service.md`）；局域网网页/其他客户端输出待验收 | Hub 调 API，解码 PCM16，按客户端能力发送；Native Audio Body 是当前唯一已验收播放端，浏览器不能直接继承该证据 |
+| TTS | `docs/TTS_REQUIREMENTS.md` | Native Audio Body 闭环完成（2026-10-26 实跑验收，报告 `D:\11\Logs\2026-10-26-Absolute-Solver-TTS正式验收.md`）；TTS Provider 已切为局域网 OpenAI 远程服务（2026-10-27）；Coo `tts.voice` 附件已由 Host 同源接口交付并在 Host 浏览器端播放验证；第二台 LAN 设备仍待人工验收 | Hub 调 API，解码 PCM16，按客户端能力发送；Coo TTS 与 Solver Native Body 是两条不同路径，验收证据不能互相替代 |
 | ASR/语音输入 | `docs/protocol.md`、`src/adapters.rs`、`src/bin/body.rs` | 任务制定者因环境（耳机麦电平不足、平时不使用语音输入）免除实麦人工朗读条件（2026-10-26）；验收依据为完整音频经 Hub 回合和源 WAV 直连 Provider 逐字转写，状态 accepted；设备可选 | ASR Provider 可探测，音频受限、可审计，失败时文本/字幕降级；采集设备必须可指定（`SOLVER_CAPTURE_DEVICE`）并在低电平时显式告警 |
 | LLM 回合 | `docs/protocol.md`、`src/bin/hub.rs` | 基础完成 | Hub 管理 turn、预算、超时、降级和 trace；模型不拥有会话权威 |
 | Cortico 协作 | `docs/north-star.md`、`src/cortico.rs`、`src/bin/hub.rs` | 边界已定义；Cortico 服务已恢复，运行稳定性观察中；生产量化未验收，缺少 World 输入到 Persona 决策的因果关联 ID | Cortico 持有 Persona 决策；Hub 持有 turn、权限、路由和降级；事件是低信任数据，不得覆盖系统/项目规则、用户规则或授权；工具动作必须有回执；silence 是有效决策 |
-| LAN 多设备入口 | `docs/SOLVER_CONSTITUTION.md`、`docs/SOLVER_CONTENT_MAP.md` | `/app` 文本、PCM 播放/段回执已实现；Host 只读服务目录已实现并完成本机 LAN 网卡自测；`cortico-world-absolute-solver@0.1.0` 已作为 API 6 World 安装到本机 Coo；第二台设备访问、Coo 原服务投影/Body 桥、端到端及认证/配对仍未验收 | Solver 必须提供可由桌面/手机/Pi 浏览器和 Coo WebView 访问的交互网页；服务目录是只读观察入口，不替代该交互网页；Cortico WebUI 是回环管理控制台，不可替代 |
+| LAN 多设备入口 | `docs/SOLVER_CONSTITUTION.md`、`docs/SOLVER_CONTENT_MAP.md` | Host 根入口直接代理 Coo 原 `/pet`，因此桌宠 renderer、菜单、打字、气泡、动作和原生 `/socket` 交互由 Coo 保持；`/services` 是独立只读目录；Coo `tts.voice` 音频附件可经同源接口交给 LAN 浏览器。第二台设备人工打开、HTTPS 麦克风、认证/配对仍未验收 | Solver 必须提供可由桌面/手机/Pi 浏览器和 Coo WebView 访问的交互网页；服务目录是只读观察入口，不替代该交互网页；Cortico WebUI 是回环管理控制台，不可替代 |
 | Native Body | `docs/protocol.md`、`src/bin/body.rs` | 音频 Body 生产运行已验收（2026-10-26）；显示类 Body 仍待验收 | Body 注册、active handoff、音频接收和实际扬声器播放必须可证明 |
 | World/机器人监视 | `docs/integrations/xuegeros.md` | 监视链路基本完成 | 原始帧和 tensor 不进入 Persona、记忆或长期 trace；监视投影不得变成控制通道 |
+
+### 本轮补充事实（2026-10-28，覆盖上方旧快照）
+
+校正：Host 根页面直接同源代理 Coo 原 `/pet`，Coo 自己的 `send`/历史/回执聊天流、菜单、打字、语音输入、气泡、动作和 `/socket` 均由原页面运行；Host 不另造聊天界面。`/services` 只读显示服务健康状态；Hub `/app` 仅保留为 Solver 协议原型/回退入口，不是 Coo 主对话入口。操作者确认 Coo TTS 整条链路正常；LAN Host 浏览器可通过 `/api/coo/audio` 与 `/api/coo/blob` 接收并播放 `tts.voice` 附件。Cortico paused 时真实 Persona 回复仍未测，第二设备、HTTPS 麦克风与 LAN 配对/认证仍待验收。
+
+- Coo 的 `cortico-world-tts@0.1.4` 已用 `tts-1`/`xxx_trained` 调用局域网 OpenAI 兼容 TTS，两次真实音色合成通过；`cortico-world-audio-play@0.4.0` 已安装并订阅 `tts.voice`。操作者确认整条 TTS 链路正常；Hub Native Body 探针不能用于否定 Coo 自己的播放路径。证据：`D:\11\Logs\2026-10-28-coo-tts-接入.md`。
+- Host 页面中的 Hub `/app` 是 Solver 客户端原型，不等于 Coo 原生对话接入。Coo `desktop-pet` 已有自己的 `send`/历史/回执聊天流，当前根入口直接复用 Coo `/pet`；`/coo/chat` 不属于当前实现。
 
 ### P2：运行质量和发布
 

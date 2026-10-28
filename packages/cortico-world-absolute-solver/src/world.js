@@ -67,8 +67,10 @@ export class AbsoluteSolverWorld {
   }
 
   envPromptVars() {
+    const projectionUrl = directoryUrl(this.cfg);
     return {
-      'absolute-solver.directoryUrl': directoryUrl(this.cfg),
+      'absolute-solver.projectionUrl': projectionUrl,
+      'absolute-solver.directoryUrl': projectionUrl ? `${projectionUrl}/services` : '',
       'absolute-solver.status': this.last.status === 'online'
         ? `${this.last.services.length} 项服务目录可读，最近检查 ${this.last.checkedAt || '未知'}`
         : this.last.error || '尚未读取服务目录',
@@ -89,19 +91,24 @@ export class AbsoluteSolverWorld {
     }];
   }
 
-  console() {
+  webUi() {
+    const projectionUrl = directoryUrl(this.cfg);
     return {
       label: LABEL,
       config: [CONFIG_GROUP],
-      badges: [{ label: '目录', value: directoryUrl(this.cfg) || '地址无效', tone: directoryUrl(this.cfg) ? 'on' : 'off' }],
-      links: directoryUrl(this.cfg) ? [{ label: '打开局域网服务目录', href: directoryUrl(this.cfg), inheritTheme: true }] : [],
+      badges: [{ label: '投影网页', value: projectionUrl || '地址无效', tone: projectionUrl ? 'on' : 'off' }],
+      links: projectionUrl ? [
+        { label: '打开当前投影网页', href: projectionUrl, inheritTheme: true },
+        { label: '打开服务目录', href: `${projectionUrl}/services`, inheritTheme: true },
+      ] : [],
       promptDocs: [{
         key: 'worlds.absolute-solver.envPrompt',
-        title: 'Absolute Solver · 环境提示',
-        description: '服务目录地址和最近一次读取状态。',
+        title: 'Absolute Solver · 投影与使用说明',
+        description: '当前投影网页、服务目录地址、使用方式和最近一次目录状态。',
         path: ENV_PROMPT_FILE,
         role: 'envPrompt',
         vars: [
+          { name: 'absolute-solver.projectionUrl', description: '当前 Coo 桌宠投影网页；可在同一可信 LAN 浏览器打开' },
           { name: 'absolute-solver.directoryUrl', description: '只读服务目录地址' },
           { name: 'absolute-solver.status', description: '最近一次目录读取状态' },
         ],

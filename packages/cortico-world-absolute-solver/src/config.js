@@ -3,7 +3,7 @@ export const LABEL = 'Absolute Solver 服务目录';
 
 export const DEFAULTS = {
   enabled: false,
-  directoryUrl: 'http://127.0.0.1:18110',
+  directoryUrl: 'http://127.0.0.1:18111',
   requestTimeoutMs: 3000,
 };
 
@@ -18,7 +18,7 @@ export const CONFIG_GROUP = {
       'worlds.absolute-solver.directoryUrl': {
         type: 'string',
         title: '服务目录地址',
-        description: '例如 http://192.168.1.178:18110；只读目录，不是 Hub 控制入口。',
+        description: '填写 Host 投影服务根地址，例如 http://192.168.1.178:18111；根路径是 Coo 桌宠投影页，/services 是只读服务目录。',
         format: 'uri',
         'x-hot': true,
       },
