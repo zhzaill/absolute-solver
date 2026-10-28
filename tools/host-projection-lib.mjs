@@ -43,6 +43,30 @@ export function publicService(service, host, result, checkedAt) {
   };
 }
 
+export function rewriteCooCsp(policy, projectionHost) {
+  const directives = policy.split(';').map((part) => part.trim()).filter(Boolean).map((part) => part.split(/\s+/));
+  const updated = [];
+  let hasConnect = false;
+  for (const [name, ...sources] of directives) {
+    if (name === 'frame-ancestors') {
+      updated.push([name, "'self'"]);
+      continue;
+    }
+    if (name === 'connect-src') {
+      updated.push([name, ...sources.filter((source) => !["'self'", "'none'"].includes(source) && !/^(ws|wss):\/\/(127\.0\.0\.1|localhost)/i.test(source)), "'self'", `ws://${projectionHost}`]);
+      hasConnect = true;
+      continue;
+    }
+    if (['script-src', 'img-src'].includes(name)) {
+      updated.push([name, ...sources.filter((source) => !["'self'", "'none'"].includes(source) && !/^https?:\/\/(127\.0\.0\.1|localhost)/i.test(source)), "'self'"]);
+      continue;
+    }
+    updated.push([name, ...sources.filter((source) => source !== "'none'")]);
+  }
+  if (!hasConnect) updated.push(['connect-src', "'self'", `ws://${projectionHost}`]);
+  return updated.map((parts) => parts.join(' ')).join('; ');
+}
+
 export async function probeService(service, fetchImpl = fetch, now = () => Date.now()) {
   const baseUrl = safeAddress(service.baseUrl);
   if (!baseUrl || typeof service.healthPath !== 'string' || !service.healthPath.startsWith('/') || service.healthPath.startsWith('//')) {

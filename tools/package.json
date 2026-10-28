@@ -1,0 +1,11 @@
+{
+  "name": "absolute-solver-projection-runtime",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node host-projection.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

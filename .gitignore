@@ -18,6 +18,8 @@
 /monitor.cmd
 /tools/live2d-stage-server.mjs
 /tools/gen-stage-importmap.mjs
+/tools/host-projection.local.json
+/tools/node_modules/
 /*.b64
 /DEPLOY*
 /MANUAL_DEPLOY.md

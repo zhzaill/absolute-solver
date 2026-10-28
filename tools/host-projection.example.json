@@ -1,6 +1,8 @@
 {
   "listenHost": "0.0.0.0",
   "listenPort": 18111,
+  "cooBaseUrl": "http://127.0.0.1:7797",
+  "hubBaseUrl": "http://127.0.0.1:18100",
   "host": {
     "id": "solver-host",
     "name": "Solver Host",
