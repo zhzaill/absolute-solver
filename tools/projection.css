@@ -1,0 +1,27 @@
+:root { color-scheme: light; font: 14px/1.45 "Segoe UI", "Microsoft YaHei", sans-serif; color: #202a32; background: #f4f6f7; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+header { min-height: 96px; padding: 20px 28px; display: flex; align-items: center; justify-content: space-between; gap: 16px; background: #fff; border-bottom: 1px solid #d8dfe3; }
+.eyebrow { margin: 0 0 4px; font-size: 11px; color: #64727b; }
+h1 { margin: 0; font-size: 22px; font-weight: 650; }
+#refresh-state { color: #53636d; }
+main { max-width: 1440px; margin: 0 auto; padding: 20px 28px; }
+.host-line { display: flex; flex-wrap: wrap; gap: 24px; padding: 0 0 16px; color: #53636d; }
+.host-line span:first-child { color: #202a32; font-weight: 600; }
+table { width: 100%; border-collapse: collapse; background: #fff; }
+th, td { padding: 11px 12px; border-bottom: 1px solid #e2e7ea; text-align: left; vertical-align: top; }
+th { font-size: 12px; color: #53636d; font-weight: 600; background: #f9fafb; }
+td { overflow-wrap: anywhere; }
+.service-name { font-weight: 600; }
+.subtle { display: block; color: #64727b; font-size: 12px; }
+.state { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.state::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #89969d; }
+.state.online::before { background: #16835b; }
+.state.offline::before { background: #c04c42; }
+a { color: #075e91; }
+@media (max-width: 760px) {
+  header { padding: 16px; }
+  main { padding: 14px 16px; overflow-x: auto; }
+  table { min-width: 760px; }
+  .host-line { gap: 8px 18px; }
+}

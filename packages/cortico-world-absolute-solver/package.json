@@ -1,0 +1,24 @@
+{
+  "name": "cortico-world-absolute-solver",
+  "version": "0.1.0",
+  "description": "Cortico World for the Absolute Solver LAN service directory.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zhzaill/absolute-solver.git",
+    "directory": "packages/cortico-world-absolute-solver"
+  },
+  "keywords": ["cortico-world", "cortico", "absolute-solver", "lan", "service-directory"],
+  "engines": { "node": ">=22" },
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": { ".": "./src/index.js" },
+  "files": ["src", "README.md"],
+  "scripts": { "test": "node --test test/world.test.mjs" },
+  "publishConfig": { "access": "public" },
+  "cortico": {
+    "kind": "world",
+    "api": 6,
+    "displayName": "Absolute Solver 服务目录"
+  }
+}

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Host 服务目录</title>
+  <link rel="stylesheet" href="/projection.css">
+  <script defer src="/projection.js"></script>
+</head>
+<body>
+  <header>
+    <div><p class="eyebrow">ABSOLUTE SOLVER / HOST PROJECTION</p><h1>服务目录</h1></div>
+    <div id="refresh-state" role="status">正在检查</div>
+  </header>
+  <main>
+    <section class="host-line" aria-label="Host 信息">
+      <span id="host-name">未知 Host</span><span id="host-address">地址未知</span><span id="updated-at">尚无状态</span>
+    </section>
+    <table>
+      <thead><tr><th>服务</th><th>Host / 地址</th><th>状态</th><th>版本</th><th>能力</th><th>入口</th></tr></thead>
+      <tbody id="services"><tr><td colspan="6">正在读取服务目录</td></tr></tbody>
+    </table>
+  </main>
+</body>
+</html>

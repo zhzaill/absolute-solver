@@ -1,0 +1,48 @@
+{
+  "listenHost": "0.0.0.0",
+  "listenPort": 18111,
+  "host": {
+    "id": "solver-host",
+    "name": "Solver Host",
+    "address": null
+  },
+  "services": [
+    {
+      "id": "cortico-world",
+      "name": "Cortico World",
+      "type": "world",
+      "baseUrl": "http://127.0.0.1:7797",
+      "healthPath": "/api/state",
+      "interfaceUrl": "http://127.0.0.1:7797/pet",
+      "version": "unknown",
+      "capabilities": ["pet-renderer", "world-state"]
+    },
+    {
+      "id": "asr",
+      "name": "ASR Provider",
+      "type": "asr",
+      "baseUrl": "http://127.0.0.1:9881",
+      "healthPath": "/v1/models",
+      "version": "unknown",
+      "capabilities": ["transcription"]
+    },
+    {
+      "id": "llm",
+      "name": "LLM Provider",
+      "type": "llm",
+      "baseUrl": "http://127.0.0.1:18081",
+      "healthPath": "/health",
+      "version": "unknown",
+      "capabilities": ["generation"]
+    },
+    {
+      "id": "tts",
+      "name": "TTS Provider",
+      "type": "tts",
+      "baseUrl": "http://127.0.0.1:18080",
+      "healthPath": "/healthz",
+      "version": "unknown",
+      "capabilities": ["speech-synthesis"]
+    }
+  ]
+}
