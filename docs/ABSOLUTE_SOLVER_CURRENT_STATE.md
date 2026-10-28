@@ -24,7 +24,7 @@ Absolute Solver 是跨主机实时协作系统：Hub 编排回合、Body 路由�
 
 Absolute Solver 的目标是：让同一个 Cortico Persona 通过局域网统一入口出现在浏览器、桌面、手机、树莓派和 Coo 上。局域网交互网页和多设备客户端协议是核心功能；Cortico 是 Persona/World/记忆与语义决策层，Hub 是设备会话、权限、音频路由和执行事实权威。源码现为公开仓库，生产系统仍是可信局域网内的私人部署。
 
-独立运维监控面板、机器人/XuegerOS、VLA、桌面 CUA、Provider 流式 PCM、gRPC 和公开 SDK 都属于可选扩展或实验路线。首个 `/app` 文本客户端已接入开发中，尚未完成浏览器播放、权限和跨设备验收；浏览器、Coo、手机和树莓派的实际音频输出仍需分别验收，不能用 Native Audio Body 的证据代替。
+独立运维监控面板、机器人/XuegerOS、VLA、桌面 CUA、Provider 流式 PCM、gRPC 和公开 SDK 都属于可选扩展或实验路线。`/app` 有文本入口、浏览器 PCM 播放/段回执；Coo 服务投影/Body 适配未接入，网页不再用自绘图冒充桌宠。浏览器端到端与权限/配对仍待验收；浏览器、Coo、手机和树莓派的实际音频输出仍需分别验收，不能用 Native Audio Body 的证据代替。
 
 ## 运行快照
 
@@ -49,7 +49,7 @@ Absolute Solver 的目标是：让同一个 Cortico Persona 通过局域网统�
 | TTS 段级回执 | accepted；生产正常分段与 Body 队列打断均已实跑验收 | `D:\11\Logs\2026-10-27-tts-segment-receipts.md`、`D:\11\Logs\2026-10-27-tts-segment-receipts-production-deploy.md`、`D:\11\Logs\2026-10-27-tts-segment-receipts-body-production.md` |
 | Cortico 协作边界 | 架构职责已明确；服务已恢复、运行调试中；生产量化未验收（尚无可关联的自然事件样本） | `docs/tasks/2026-10-27-cortico-collaboration-metrics.md`、`D:\11\Logs\2026-10-27-cortico-collaboration-baseline.md`、`D:\11\Logs\2026-10-27-cortico-runtime-debug.md` |
 | Cortico 现有平台能力复用 | 已完成源码/运行边界核对；生产 QQ 已挂载但 NapCat 未连接、名单为空；Cortico ASR/VTuber 扩展未部署 | `docs/SOLVER_CONTENT_MAP.md`、`D:\11\Logs\2026-10-27-Solver-宪法与内容整理.md`、`D:\11\Logs\2026-10-27-Cortico启动与连接.md` |
-| Solver 局域网交互网页 | 首个 `/app` 文本客户端已实现，待端到端验收；尚无操作者认证/配对 | Hub `/app`、`src/bin/client.html`；Cortico WebUI 仍仅是管理控制台，不算设备入口 |
+| Solver 局域网交互网页 | `/app` 文本、PCM 播放/段回执已实现；Coo 原服务投影/Body 桥未实现，待浏览器端到端及认证/配对验收 | Hub `/app`、`src/bin/client.html`；本地 Coo `/pet` 不等于 Solver 投影 |
 | Provider 流式 PCM | blocked（已完成可行性测量） | `D:\11\Logs\2026-10-27-tts-streaming-pcm-可行性判定.md`；网关缓冲整段响应 |
 | ASR Provider 与 WAV 回放 | verified | `D:\11\Logs\2026-10-26-asr-input-turn.md` |
 | ASR 实麦通路 | accepted（任务制定者环境豁免，2026-10-26） | 完整音频经 Hub 回合、源 WAV 直连 Provider；`D:\11\Logs\2026-10-26-asr-input-turn.md`、`D:\11\Logs\2026-10-26-ASR实麦诊断与录音台.md` |
@@ -57,6 +57,8 @@ Absolute Solver 的目标是：让同一个 Cortico Persona 通过局域网统�
 ASR 诊断结论：此前两次 Hub 实麦回合仅转写为“嗯”。本地默认耳机麦 Lenovo EH150P 为 16 kHz 单声道，但电平低且静音段占多数；内置 Realtek 阵列和两路虚拟麦在驱动层送全 0。声学回环中源 WAV 被逐字正确识别，同一音频的麦克风采集版本识别错误，故障定位到输入设备侧而非 ASR Provider/Hub。任务制定者因环境（耳机麦电平不足、平时不使用语音输入）免除实麦人工朗读条件；ASR 通过依据回到完整音频经 Hub 的 `audio.up` → ASR → LLM → TTS → Body 播放回合，以及源 WAV 直连 Provider 的逐字转写。设备选择、实时波形/频谱和录音台工具已实现，见 `absolute-solver-mic-probe`、`absolute-solver-mic-monitor`、`录音键.cmd`。
 
 ## 功能后续
+
+- 2026-10-28 Host 投影阶段一：只读目录与健康探测已实现，单机 LAN 网卡实测通过；Cortico World 包 `cortico-world-absolute-solver@0.1.0` 已发布并安装到本机 Coo 扩展目录，World id 为 `absolute-solver`，工具为 `solver_services`。目录地址为 `http://192.168.1.178:18111/`。第二台设备访问、Coo `/pet` 跨主机原服务投影仍未验收，不标记 accepted。代码与实测边界见 `docs/tasks/2026-10-28-host-projection.md`、`tools/HOST_PROJECTION.md`、`D:\11\Logs\2026-10-28-host-projection-stage1.md`。
 
 这些项目是后续工作，不要与 Release 门槛混称为“唯一主任务”：
 
@@ -70,6 +72,7 @@ ASR 诊断结论：此前两次 Hub 实麦回合仅转写为“嗯”。本地�
 - Cortico `/api/worlds` 的只读快照显示 `solver=active`；`qq=active` 但连接状态为 error、监听名单为 0；`host` 当时显示 Hub 在线、0 个 Body。部署 `solver/config.json` 只覆盖 Solver World，默认 World 挂载由 Bot/Core 合并配置决定，不能单看部署 JSON 推断运行时启用状态。运行证据见 `D:\11\Logs\2026-10-27-Cortico启动与连接.md`。
 - Cortico 管理 WebUI 只绑定服务器 loopback。它可以经受控隧道用于管理员维护，不能作为手机、Coo 或树莓派的 Solver 局域网交互入口。
 - Cortico VTuber 扩展的 `outputTap` 捕获 Persona 演出工具流；TTS 合成可调用 HTTP 服务，字幕/动作经 SSE 推送，但 PCM 由 `DeviceAudioSink` 写 Cortico 主机声卡。扩展 SSE 不提供音频出口，因此未来复用桌宠声音时，Hub 必须接管 TTS 音频的设备路由和回执。源码审查基于本地只读缓存 `D:\11\Cache\cortico-world-vtuber-main`；生产未部署该扩展。
+- Coo `cortico-world-desktop-pet@0.2.0` 默认配置是 `figure=whale`、`scheme=deepseek`（DeepSeek 大肥鱼）。当前 Coo `/pet` 服务页在本机端口 `7797`，真实加载 renderer、形象资源与桌宠运行时；服务只绑定 loopback。Solver `/app` 尚未投影该服务，跨 LAN 需要本机 Body/投影桥；先前自绘 CSS 演示已移除。细节见 `docs/integrations/coo-render-contract.md` 和本地 `D:\11\Logs\2026-10-27-coo-render-contract.md`。
 
 ## 核心运行时收束项
 
