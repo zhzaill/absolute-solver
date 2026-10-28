@@ -3,6 +3,8 @@
 更新时间：2026-10-28（Asia/Shanghai）
 适用范围：仅 Absolute Solver 仓库、Hub/Body/Provider 运行链路及其验收证据。本文是日期快照，不代替源代码、实际运行结果和 `D:\11\Logs` 原始报告。
 
+接手开发总手册：`docs/ABSOLUTE_SOLVER_REQUIREMENTS_AND_IMPLEMENTATION.md`。其中的阶段拆分、代码入口、接口边界和验收矩阵以本快照、源代码及 `D:\11\Logs` 为事实来源。
+
 ## 证据规则
 
 当前代码、测试输出和实际运行记录优先；`D:\11\Logs` 保存验收证据；本文件只做摘要与索引。计划文档和状态措辞本身不能把功能改成 `accepted`。新证据应追加到日志并更新本手册，不覆盖历史结论。长期可复用的失败根因、架构决策和验证经验集中索引于 `docs/EXPERIENCE_LEDGER.md`。

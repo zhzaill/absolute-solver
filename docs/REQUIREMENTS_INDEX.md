@@ -10,6 +10,8 @@
 
 历史工程经验索引：`docs/EXPERIENCE_LEDGER.md`。它回收 `D:\11\Logs` 的有效决策、缺陷根因、验收方法和边界；原始 Logs 仍是运行证据。
 
+需求拆分与实现总手册：`docs/ABSOLUTE_SOLVER_REQUIREMENTS_AND_IMPLEMENTATION.md`。面向接手工程师，汇总模块职责、当前实现、阶段二/三接口边界、验收矩阵和证据位置；它不替代源代码、协议或运行日志。
+
 当前状态入口：`docs/ABSOLUTE_SOLVER_CURRENT_STATE.md`。该文件只索引代码与 Logs 证据，不能单独宣布完成；最新整理记录为 `D:\11\Logs\2026-10-27-Solver-宪法与内容整理.md`。
 
 ## 1. 文档层级

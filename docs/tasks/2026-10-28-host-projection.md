@@ -3,6 +3,8 @@
 日期：2026-10-28
 状态：服务、桌宠、对话和 TTS 能力已接入并部署本机；第二台设备仍待验收
 
+实现总手册：[`docs/ABSOLUTE_SOLVER_REQUIREMENTS_AND_IMPLEMENTATION.md`](../ABSOLUTE_SOLVER_REQUIREMENTS_AND_IMPLEMENTATION.md)。本任务卡保留阶段一的实现细节与运行证据；后续阶段的任务边界、状态规则和总体验收矩阵以总手册为准。
+
 ## 目标
 
 提供独立于 Hub/Body 控制流的只读 LAN 服务目录。目录显示 Host、服务类型、实际健康状态、版本、能力和入口；状态来自健康请求，不由配置文件单独推断。
