@@ -397,6 +397,194 @@
     },
     {
       "properties": {
+        "audio_mode": {
+          "type": "string"
+        },
+        "display_anchor": {
+          "type": "string"
+        },
+        "environment_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expires_at_ms": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "projection_id": {
+          "type": "string"
+        },
+        "purpose": {
+          "type": "string"
+        },
+        "source_instance": {
+          "type": "string"
+        },
+        "target_host_id": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "projection.visit.request"
+          ],
+          "type": "string"
+        },
+        "visit_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "audio_mode",
+        "display_anchor",
+        "expires_at_ms",
+        "projection_id",
+        "purpose",
+        "source_instance",
+        "target_host_id",
+        "type",
+        "visit_id"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "allow": {
+          "type": "boolean"
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "projection.visit.decision"
+          ],
+          "type": "string"
+        },
+        "visit_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "allow",
+        "host_id",
+        "type",
+        "visit_id"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "expires_at_ms": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "projection_id": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "projection.visit.grant"
+          ],
+          "type": "string"
+        },
+        "visit_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "expires_at_ms",
+        "host_id",
+        "projection_id",
+        "type",
+        "visit_id"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "audio_output": {
+          "type": "string"
+        },
+        "current_location": {
+          "type": "string"
+        },
+        "display_anchor": {
+          "type": "string"
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "last_transition": {
+          "type": "string"
+        },
+        "source_instance": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "target_host_id": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "projection.visit.state"
+          ],
+          "type": "string"
+        },
+        "visit_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "audio_output",
+        "current_location",
+        "display_anchor",
+        "host_id",
+        "last_transition",
+        "source_instance",
+        "status",
+        "target_host_id",
+        "type",
+        "visit_id"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "host_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "projection.visit.revoke"
+          ],
+          "type": "string"
+        },
+        "visit_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "host_id",
+        "reason",
+        "type",
+        "visit_id"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
         "environment_id": {
           "type": [
             "string",
@@ -673,6 +861,11 @@
               "presence.decision",
               "presence.grant",
               "presence.revoke",
+              "projection.visit.request",
+              "projection.visit.decision",
+              "projection.visit.grant",
+              "projection.visit.state",
+              "projection.visit.revoke",
               "access.request",
               "access.decision",
               "access.grant",

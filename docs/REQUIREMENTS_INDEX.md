@@ -48,7 +48,9 @@
 
 ### P1：核心可用链路
 
-二阶段跨主机访问许可（2026-10-29）：代码闭环已实现但仍为 `in_progress`；许可关联为 Hub 单飞 + request_id 标识校验 + Coo 登记制 Broker，本机彩排和 Windows Agent/Broker 直接启动冒烟通过。服务器隔离 Hub/Gateway/Agent/Broker 已运行，一条请求已登记但目标机失联前仍为 pending，尚无 TTS/ASR 结果、撤销/过期和回滚证据，不能 accepted。生产 Coo endpoint/Gateway 未改；已回显的生产 TTS key 仍待轮换。任务卡：`docs/tasks/2026-10-29-access-grant.md`；报告：`D:\11\Logs\2026-10-29-absolute-solver-access-grant.md`、`D:\11\Logs\2026-10-29-access-grant-request-binding.md`。
+二阶段跨主机访问许可（2026-10-29）：代码闭环已实现但仍为 `in_progress`；许可关联为 Hub 单飞 + request_id 标识校验 + Coo 登记制 Broker，本机彩排 10/10 通过。LAN 真实双机验收（`192.168.1.166` 隔离环境：Hub 18201 / Agent 18082 loopback / Broker 18084）当前 **7/11**：许可签发、Broker 登记、无许可拒绝、二次消费拒绝、WS 确认链路（`access.request → ALLOW → access.grant`）均已真实打通，Hub 记录 `status=granted`；剩余未过项根因为 Hub 绑 LAN 后 loopback 不通（已改为 LAN 地址、未重新验证）、Host 需在 caps 声明 `host_access`（已修）、验收脚本单飞断言写错（待修）。生产 Hub v0.2.1（18100，PID 6528）全程未受影响。ECS（`118.178.174.172`）ping/22 均不通，无任何证据，不得并入 LAN 结果。尚无 TTS 真实音频、ASR、撤销/过期/回滚证据，不能 accepted；生产 TTS key 仍待轮换。任务卡：`docs/tasks/2026-10-29-access-grant.md`；报告：`D:\11\Logs\2026-10-29-absolute-solver-access-grant.md`、`D:\11\Logs\2026-10-29-access-grant-request-binding.md`、`D:\11\Logs\2026-10-29-stage2-lan-acceptance-inprogress.md`。
+
+三阶段 Coo 跨 Host 串门与环境感知（2026-10-30）：**in_progress**。投影租约状态机、`projection.visit.*` 消息、Host 本地确认和固定投影窗口、Cortico 三个 World 工具、本机原生桌宠隐藏与 audio-play 自动播放静音/恢复适配已实现；Rust 51/12/24、World 7/7 测试通过。本阶段仍缺 `192.168.1.166` 可见服务器桌面真实回合：原版 `/pet` 底部显示、服务器 TTS 实际播放、本机隐藏/静音事实、Cortico remote 快照、返回及失败恢复截图。未取得这些证据前不得标记 accepted。任务卡：`docs/tasks/2026-10-30-coo-host-visit.md`；报告：`D:\11\Logs\2026-10-30-coo-host-visit.md`。
 
 | 领域 | 主文档 | 当前状态 | 硬要求 |
 |---|---|---|---|

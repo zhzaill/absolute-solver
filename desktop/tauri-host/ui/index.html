@@ -12,6 +12,7 @@
     <header><div class="sigil" aria-hidden="true">A</div><div><p class="eyebrow">ABSOLUTE SOLVER / HOST</p><h1>本机连接</h1></div><span id="connection" class="state">正在启动</span></header>
     <section class="form">
       <label>Hub WebSocket 地址<input id="hub-url" spellcheck="false"></label>
+      <label>Coo 原版投影地址<input id="projection-url" spellcheck="false" placeholder="http://192.168.1.178:18111"></label>
       <label>本机身份<input id="host-id" readonly></label>
       <label>到达策略<select id="policy"><option value="reject">拒绝所有到达</option><option value="notify">仅系统通知</option><option value="appear">允许限时全屏到达</option></select></label>
       <button id="save">保存设置并重连</button>
@@ -19,6 +20,7 @@
     </section>
     <section class="activity"><span class="pixel"></span><div><b id="activity-title">等待 Hub 请求</b><p id="activity-detail">本机默认只接受系统通知</p></div></section>
     <section class="access-panel" aria-live="polite"><h2>待确认的服务访问</h2><div id="access-requests" class="access-empty">当前没有待确认请求</div></section>
+    <section class="access-panel" aria-live="polite"><h2>待确认的 Coo 串门</h2><div id="projection-requests" class="access-empty">当前没有待确认请求</div></section>
   </main>
   <main id="overlay-view" hidden>
     <div class="matrix-bg" id="matrix-bg"></div>

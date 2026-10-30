@@ -10,6 +10,11 @@ export const DEFAULTS = {
   accessTokenSecret: 'SOLVER_PRESENCE_TOKEN',
   accessBrokerUrl: '',
   accessBrokerTokenSecret: 'SOLVER_BROKER_TOKEN',
+  projectionHubUrl: '',
+  projectionTargetHostId: '',
+  projectionSourceInstance: 'coo-local',
+  projectionTokenSecret: 'SOLVER_PRESENCE_TOKEN',
+  corticoWebUiUrl: 'http://127.0.0.1:17788',
 };
 
 export const CONFIG_GROUP = {
@@ -40,6 +45,11 @@ export const CONFIG_GROUP = {
       'worlds.absolute-solver.accessTokenSecret': { type: 'string', title: '许可密钥名称', description: '从 Cortico secret 读取的 Hub 访问密钥名称。', 'x-hot': true },
       'worlds.absolute-solver.accessBrokerUrl': { type: 'string', title: '本机许可登记地址', description: 'Coo 侧适配层地址，例如 http://127.0.0.1:18081。Coo TTS 插件的 baseUrl 指向这里；请求获批后由该适配层把这一次许可与插件调用关联。留空则不登记，许可不可用。', format: 'uri', 'x-hot': true },
       'worlds.absolute-solver.accessBrokerTokenSecret': { type: 'string', title: '登记密钥名称', description: '从 Cortico secret 读取的本地适配层密钥名称。', 'x-hot': true },
+      'worlds.absolute-solver.projectionHubUrl': { type: 'string', title: '投影许可 Hub 地址', description: '串门申请与状态同步使用的 Hub 根地址。', format: 'uri', 'x-hot': true },
+      'worlds.absolute-solver.projectionTargetHostId': { type: 'string', title: '串门目标 Host', description: '已登记的服务器 Host ID。', 'x-hot': true },
+      'worlds.absolute-solver.projectionSourceInstance': { type: 'string', title: 'Coo 实例标识', description: '用于关联本机 Coo 与投影状态的稳定标识。', 'x-hot': true },
+      'worlds.absolute-solver.projectionTokenSecret': { type: 'string', title: '投影许可密钥名称', description: '从 Cortico secret 读取的 Hub 许可密钥名称。', 'x-hot': true },
+      'worlds.absolute-solver.corticoWebUiUrl': { type: 'string', title: '本机 Cortico 控制地址', description: '用于调用 Coo 原生隐藏/恢复和本机音频播放策略的 loopback WebUI 地址。', format: 'uri', 'x-hot': true },
     },
   },
 };

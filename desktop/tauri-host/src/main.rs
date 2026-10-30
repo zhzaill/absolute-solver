@@ -13,7 +13,7 @@ use tauri::{
     image::Image,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, State, WebviewWindow,
+    AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
 use tauri_plugin_notification::NotificationExt;
 
@@ -24,6 +24,7 @@ const SHOW_SCOPE: &str = "presence:show";
 struct HostConfig {
     host_id: String,
     hub_ws_url: String,
+    projection_url: String,
     policy: String,
 }
 
@@ -32,6 +33,7 @@ impl Default for HostConfig {
         Self {
             host_id: format!("host-{}", uuid::Uuid::new_v4()),
             hub_ws_url: "ws://127.0.0.1:18100/ws".into(),
+            projection_url: String::new(),
             policy: "notify".into(),
         }
     }
@@ -46,6 +48,7 @@ struct HostState {
     event_log_path: PathBuf,
     config: Mutex<HostConfig>,
     active: Mutex<Option<ActiveOverlay>>,
+    active_visit: Mutex<Option<String>>,
 }
 
 impl HostState {
@@ -63,6 +66,7 @@ impl HostState {
             config_path,
             config: Mutex::new(config),
             active: Mutex::new(None),
+            active_visit: Mutex::new(None),
         })
     }
 }
@@ -95,6 +99,7 @@ fn show_host_window(window: WebviewWindow) -> Result<(), String> {
 #[tauri::command]
 fn save_host_config(
     hub_ws_url: String,
+    projection_url: String,
     policy: String,
     state: State<'_, HostState>,
 ) -> Result<HostConfig, String> {
@@ -109,11 +114,99 @@ fn save_host_config(
     {
         return Err("Hub 地址必须使用 ws:// 或 wss://".into());
     }
+    validate_projection_url(&projection_url)?;
     let mut config = state.config.lock().map_err(|_| "配置锁不可用".to_owned())?;
     config.hub_ws_url = hub_ws_url;
+    config.projection_url = projection_url;
     config.policy = policy;
     write_config(&state.config_path, &config)?;
     Ok(config.clone())
+}
+
+fn validate_projection_url(value: &str) -> Result<url::Url, String> {
+    let parsed = url::Url::parse(value.trim()).map_err(|_| "投影地址格式无效")?;
+    if !matches!(parsed.scheme(), "http" | "https")
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+        || !matches!(parsed.path(), "" | "/")
+    {
+        return Err("投影地址必须是固定的 http(s) 根地址，不能带账号、参数或路径".into());
+    }
+    Ok(parsed)
+}
+
+#[tauri::command]
+fn open_projection_window(
+    app: AppHandle,
+    visit_id: String,
+    projection_id: String,
+    expires_at_ms: u64,
+    state: State<'_, HostState>,
+) -> Result<(), String> {
+    if projection_id != "coo-pet" || visit_id.is_empty() || visit_id.len() > 96 {
+        return Err("投影租约字段无效".into());
+    }
+    if expires_at_ms <= wall_ms() {
+        return Err("投影租约已过期".into());
+    }
+    let config = state.config.lock().map_err(|_| "配置锁不可用".to_owned())?.clone();
+    let url = validate_projection_url(&config.projection_url)?;
+    if let Some(existing) = app.get_webview_window("coo-visit") {
+        existing.close().map_err(|error| error.to_string())?;
+    }
+    let monitor = app.primary_monitor().map_err(|error| error.to_string())?.ok_or("没有可用显示器")?;
+    let scale = monitor.scale_factor();
+    let position = monitor.position();
+    let size = monitor.size();
+    let width = 520.0;
+    let height = 360.0;
+    let x = position.x as f64 / scale + size.width as f64 / scale - width;
+    let y = position.y as f64 / scale + size.height as f64 / scale - height;
+    *state.active_visit.lock().map_err(|_| "投影状态锁不可用".to_owned())? = Some(visit_id.clone());
+    let result = WebviewWindowBuilder::new(&app, "coo-visit", WebviewUrl::External(url))
+        .title("Coo · 串门中")
+        .inner_size(width, height)
+        .position(x.max(position.x as f64 / scale), y.max(position.y as f64 / scale))
+        .decorations(false)
+        .transparent(true)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .visible(true)
+        .build();
+    if let Ok(window) = &result {
+        let app_for_event = app.clone();
+        let visit_for_event = visit_id.clone();
+        window.on_window_event(move |event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                let _ = app_for_event.emit("coo-projection-closed", visit_for_event.clone());
+            }
+        });
+    }
+    if let Err(error) = result {
+        *state.active_visit.lock().map_err(|_| "投影状态锁不可用".to_owned())? = None;
+        return Err(error.to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn close_projection_window(
+    app: AppHandle,
+    visit_id: String,
+    state: State<'_, HostState>,
+) -> Result<bool, String> {
+    let mut active = state.active_visit.lock().map_err(|_| "投影状态锁不可用".to_owned())?;
+    if active.as_deref() != Some(visit_id.as_str()) {
+        return Ok(false);
+    }
+    *active = None;
+    if let Some(window) = app.get_webview_window("coo-visit") {
+        window.close().map_err(|error| error.to_string())?;
+    }
+    Ok(true)
 }
 
 #[tauri::command]
@@ -250,9 +343,10 @@ fn main() {
 
             let open = MenuItem::with_id(app, "open", "打开设置面板", true, None::<&str>)?;
             let revoke = MenuItem::with_id(app, "revoke", "撤销显示并隐藏", true, None::<&str>)?;
+            let return_visit = MenuItem::with_id(app, "return-visit", "结束 Coo 串门", true, None::<&str>)?;
             let exit =
                 MenuItem::with_id(app, "exit", "退出 Absolute Solver Host", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open, &revoke, &exit])?;
+            let menu = Menu::with_items(app, &[&open, &revoke, &return_visit, &exit])?;
             let _tray = TrayIconBuilder::new()
                 .icon(tray_icon())
                 .tooltip("Absolute Solver Host")
@@ -267,6 +361,7 @@ fn main() {
                     "revoke" => {
                         let _ = app.emit("host:revoke-request", ());
                     }
+                    "return-visit" => { let _ = app.emit("host:visit-return-request", ()); }
                     "exit" => app.exit(0),
                     _ => {}
                 })
@@ -294,6 +389,8 @@ fn main() {
             show_presence_overlay,
             hide_presence_overlay,
             notify_presence
+            ,open_projection_window,
+            close_projection_window
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Absolute Solver Host");

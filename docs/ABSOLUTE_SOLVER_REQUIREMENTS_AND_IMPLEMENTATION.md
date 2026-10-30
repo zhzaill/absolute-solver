@@ -239,6 +239,14 @@ Body/Host 环境变化
 
 完成判据：一条真实回合报告同时给出事件/请求/许可/结果关联；未满足前保持 `pending`。
 
+### 6.4 Coo 跨 Host 串门与环境感知落地
+
+第三阶段跳过 ASR，普通服务器固定为 `192.168.1.166`。Coo 继续在本机运行；目标 Host 只在本地确认后打开固定的 Coo 原生 `/pet`，不启动第二个 Coo。Hub 维护 `ProjectionVisit` 的请求、批准、实际 active、TTL、撤销、断线和快照，不替 Cortico 决定是否串门。
+
+实现入口：`src/projection.rs`、`src/bin/hub.rs`、`desktop/tauri-host`、`packages/cortico-world-absolute-solver/src/world.js`。World 提供 `solver_request_visit`、`solver_return_visit`、`solver_environment`；Host 使用固定 `coo-pet`、`bottom`、`remote_active`，拒绝任意 URL、命令和浏览器参数。串门期间 World 通过 Cortico 原生 WebUI 隐藏本机桌宠、关闭 `worlds.audio-play.autoPlay` 并清空当前队列，保存并恢复原设置；实际控制失败会进入结构化 `local_output.lastError`。
+
+阶段任务卡：`docs/tasks/2026-10-30-coo-host-visit.md`。本机/隔离测试已通过；`192.168.1.166` 服务器桌面真实显示、远端 TTS 播放、截图、返回和断线恢复尚未验收，因此状态仍为 `in_progress`。
+
 ## 7. 验收、证据、状态和回滚矩阵
 
 | 模块 | 代码入口/接口 | 测试与运行证据 | 当前结论 | 回滚方式 |
@@ -249,8 +257,8 @@ Body/Host 环境变化
 | Coo World | `packages/cortico-world-absolute-solver/src/world.js`、`webUi()` | `npm test` 3/3、`npm pack --dry-run`、manifest 实测 | accepted（第二设备 pending） | Cortico 配置恢复备份或卸载包 |
 | Coo TTS | `world:tts`、`tts.voice`、`audio-play`、`/api/coo/audio` | Coo TTS 接入报告、WAV 读取/播放 | accepted 本机 | 恢复 Coo World 配置备份 |
 | ASR | Provider、`audio.up` | WAV/Hub 回合和 ASR 报告 | verified；实麦豁免 | 保持 WAV/Provider 路径，设备问题单独处理 |
-| 阶段二 | `/host/connect`、Presence 接口及未来目标服务适配 | 尚无阶段二报告 | pending | 删除新增许可适配，不动现有插件 |
-| 阶段三 | Body/Host 事实、Cortico World、既有插件 | 尚无自然关联回合 | pending | 停用环境事件适配，保留只读目录 |
+| 阶段二 | `/host/connect`、Presence 接口及目标服务适配 | 双机真实 TTS/ASR 尚未完成 | in_progress | 删除新增许可适配，不动现有插件 |
+| 阶段三 | `src/projection.rs`、Projection WebSocket/HTTP、Host 固定窗口、World 三工具 | `cargo test` 51/12/24、World 7/7；服务器桌面真实回合尚无证据 | in_progress | 停用投影租约适配，保留只读目录 |
 | 安全与发布 | TLS 环境变量、部署脚本、凭据配置 | 尚无轮换/配对/连续性收束报告 | pending | 恢复旧配置仅限受控内网，禁止按旧文件名判断版本 |
 
 现有证据至少包括：`cargo test` 42 lib/12 body/23 hub；`node --test tools/host-projection.test.mjs` 5/5；插件测试 3/3；Host 根页面、原生 WebSocket、Coo TTS WAV 播放；`D:\11\Logs\2026-10-28-host-projection-stage1.md`、`D:\11\Logs\2026-10-28-coo-tts-接入.md`、TTS 正式验收、段级回执、ASR 和流式阻塞报告。
@@ -258,8 +266,8 @@ Body/Host 环境变化
 ## 8. 接手开发的推进顺序
 
 1. 维护阶段一：第二台 LAN 设备打开根页面和 `/services`；补 HTTPS 证书信任和浏览器麦克风验收；补自然 Cortico 回合的关联 ID。
-2. 阶段二：拆 Host 在线/能力声明、目标发现、一次许可、撤销/过期、断线和 trace 对账任务；先复用现有 Presence/Host 机制。
-3. 阶段三：拆环境事实快照、权限已生效通知、Cortico 决策关联、既有插件结果和 Coo/Body 回执任务。
+2. 收束阶段二：在 `192.168.1.166` 完成目标 Host 本地确认、固定 TTS 转发、结果回执、撤销/过期和回滚证据。
+3. 收束阶段三：在 `192.168.1.166` 启动可见 Host/投影入口，完成服务器截图、远端播放、本机隐藏/静音、环境快照、返回和断线恢复；证据齐全后才可 accepted。
 4. 安全收束：轮换历史凭据、确认 Hub 访问边界、完成 TLS/配对方案、解释 trace turn 41 → turn 18 的断点、改正构建文件版本命名。
 5. 暂不推进流式 PCM、gRPC、机器人运动和独立面板，除非对应触发条件和验收目标已经出现。
 

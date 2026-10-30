@@ -88,6 +88,50 @@ pub enum Message {
         host_id: String,
         reason: String,
     },
+    #[serde(rename = "projection.visit.request")]
+    ProjectionVisitRequest {
+        visit_id: String,
+        source_instance: String,
+        purpose: String,
+        target_host_id: String,
+        projection_id: String,
+        display_anchor: String,
+        audio_mode: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        environment_id: Option<String>,
+        expires_at_ms: u64,
+    },
+    #[serde(rename = "projection.visit.decision")]
+    ProjectionVisitDecision {
+        visit_id: String,
+        host_id: String,
+        allow: bool,
+    },
+    #[serde(rename = "projection.visit.grant")]
+    ProjectionVisitGrant {
+        visit_id: String,
+        host_id: String,
+        projection_id: String,
+        expires_at_ms: u64,
+    },
+    #[serde(rename = "projection.visit.state")]
+    ProjectionVisitState {
+        visit_id: String,
+        host_id: String,
+        source_instance: String,
+        target_host_id: String,
+        status: String,
+        current_location: String,
+        display_anchor: String,
+        audio_output: String,
+        last_transition: String,
+    },
+    #[serde(rename = "projection.visit.revoke")]
+    ProjectionVisitRevoke {
+        visit_id: String,
+        host_id: String,
+        reason: String,
+    },
     #[serde(rename = "access.request")]
     AccessRequest {
         request_id: String,
@@ -170,6 +214,11 @@ impl Message {
             | Self::PresenceDecision { .. }
             | Self::PresenceGrant { .. }
             | Self::PresenceRevoke { .. }
+            | Self::ProjectionVisitRequest { .. }
+            | Self::ProjectionVisitDecision { .. }
+            | Self::ProjectionVisitGrant { .. }
+            | Self::ProjectionVisitState { .. }
+            | Self::ProjectionVisitRevoke { .. }
             | Self::AccessRequest { .. }
             | Self::AccessDecision { .. }
             | Self::AccessGrant { .. }
@@ -350,7 +399,7 @@ pub enum WireDecodeError {
 }
 
 /// Wire names of every message type defined by protocol v1.
-pub const MESSAGE_TYPES: [&str; 19] = [
+pub const MESSAGE_TYPES: [&str; 24] = [
     "hello",
     "audio.up",
     "say",
@@ -362,6 +411,11 @@ pub const MESSAGE_TYPES: [&str; 19] = [
     "presence.decision",
     "presence.grant",
     "presence.revoke",
+    "projection.visit.request",
+    "projection.visit.decision",
+    "projection.visit.grant",
+    "projection.visit.state",
+    "projection.visit.revoke",
     "access.request",
     "access.decision",
     "access.grant",

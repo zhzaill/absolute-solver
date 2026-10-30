@@ -40,6 +40,22 @@
 - 许可关联：单飞使元组分支不再可歧义；标识优先使带 id 的调用无法被"另一条相似许可"顶替；Broker 使未登记的许可在到达 Agent 前即被拒绝。
 - 运行报告：`D:\11\Logs\2026-10-29-absolute-solver-access-grant.md`。
 
+## LAN 双机验收进展（2026-10-29，未通过）
+
+隔离环境已部署到 `192.168.1.166`（Hub 18201 / Agent 18082 loopback / Broker 18084），生产 Hub v0.2.1（18100，PID 6528）全程未受影响。
+
+验收 **7/11**：许可签发、Broker 登记、无许可拒绝、二次消费拒绝、生产 Hub 未受影响均通过；WS 确认链路已真实打通（`access.request → ALLOW → access.grant`，Hub 记录 `status=granted`）。
+
+三个未通过项及根因：
+
+1. **Hub 绑 LAN 后 loopback 不通**（`127.0.0.1:18201` = 000，`192.168.1.166:18201` = 200），而 `run-stack.ps1` 的 `SOLVER_HUB_HTTP` 指向 loopback，导致 Agent→Hub 失败、对 Agent 的请求返回 `fetch failed` 502。**已改为 LAN 地址，未重新部署验证。**
+2. **Host 必须在 hello 的 caps 里声明 `host_access: true`**（`hub.rs:2029-2041`），否则 `/access/request` 返回 403 `host_access_unsupported`。真实 Host UI 已声明（`ui/main.js:229`），替身脚本已补齐。
+3. **验收脚本第 7 项断言写错**：第一条许可 granted 未消费时第二条同路由必然 409，这是单飞的正确行为，脚本却断言 202。
+
+运维事实：SSH 会话结束会杀掉 `Start-Process` 的子进程树（须用 `Invoke-CimMethod Win32_Process Create`）；`schtasks /rl HIGHEST` 返回 0x41303 不执行；166 无交互式登录会话，真人点击须等桌面登录；166 无系统 Node，用 `Coopanion.exe` + `ELECTRON_RUN_AS_NODE=1`（Node v24.21.0）。
+
+详细记录：`D:\11\Logs\2026-10-29-stage2-lan-acceptance-inprogress.md`
+
 ## 未完成的真实验收
 
 1. 在 `192.168.1.166` 部署隔离端口 Agent 与 Broker，确认目标 Host 用户会话可显示本地确认面。

@@ -3,6 +3,7 @@ Absolute Solver Host 投影为同一可信局域网提供 Coo 原生桌宠页面
 当前投影网页：{{absolute-solver.projectionUrl}}
 只读服务目录：{{absolute-solver.directoryUrl}}
 当前目录状态：{{absolute-solver.status}}
+当前投影与位置事实：{{absolute-solver.environment}}
 
 使用方式：
 - 用户要打开 Coo 桌宠、原生菜单、打字交互、气泡或动作时，提供“当前投影网页”链接。
@@ -12,3 +13,5 @@ Absolute Solver Host 投影为同一可信局域网提供 Coo 原生桌宠页面
 目录中的在线状态来自服务健康请求；Host 在线、服务在线和用户授权是不同事实。这个 World 只提供网页入口、使用说明和服务发现，不授予访问权限，不执行插件动作，不替代 Hub、Body 或 Coo 的运行时。
 
 访问另一台 Host 上的 TTS 或 ASR 前，使用 `solver_request_access` 提出一次具名请求，并用 `solver_access_status` 读取状态。许可由目标 Host 本地确认。工具不会返回 grant、凭据或完整音频；实际 TTS/ASR 请求仍由现有插件发往 Host Agent。
+
+Coo 串门由 Cortico Persona 决定。Host 上线只是一条环境事实，不会自动发起访问。需要串门时使用 `solver_request_visit`；服务器本地确认后，读取 `solver_environment` 获取已生效的位置、投影、音频输出和租约事实。需要返回时使用 `solver_return_visit`。状态快照在重连后重新读取，不依赖事件是否送达。

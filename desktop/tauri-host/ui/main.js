@@ -1,7 +1,7 @@
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 const $ = (id) => document.getElementById(id);
-const state = { config: null, socket: null, retry: null, active: null, ttl: null, access: new Map() };
+const state = { config: null, socket: null, retry: null, active: null, ttl: null, access: new Map(), visits: new Map(), activeVisit: null };
 const showScope = 'presence:show';
 
 function status(text, kind = '') {
@@ -55,6 +55,80 @@ function renderAccessRequests() {
     }
     card.append(title, detail, actions);
     root.appendChild(card);
+  }
+}
+
+function renderProjectionRequests() {
+  const root = $('projection-requests');
+  root.replaceChildren();
+  if (!state.visits.size) { root.textContent = '当前没有待确认请求'; root.className = 'access-empty'; return; }
+  root.className = '';
+  for (const request of state.visits.values()) {
+    const card = document.createElement('article');
+    card.className = 'access-request';
+    const title = document.createElement('b');
+    title.textContent = `${request.source_instance} 请求 Coo 前往 ${state.config.hostId}`;
+    const detail = document.createElement('p');
+    detail.textContent = `原因：${request.purpose || '未提供'} · 原版桌宠页面 · 屏幕底部 · 远端声音 · 剩余 ${Math.max(0, Math.ceil((Number(request.expires_at_ms) - Date.now()) / 1000))} 秒`;
+    const actions = document.createElement('div');
+    actions.className = 'access-actions';
+    for (const [label, allow] of [['允许串门', true], ['拒绝', false]]) {
+      const button = document.createElement('button');
+      button.textContent = label;
+      if (!allow) button.className = 'deny';
+      button.addEventListener('click', () => {
+        if (!send({ type: 'projection.visit.decision', visit_id: request.visit_id, host_id: state.config.hostId, allow })) return;
+        if (!allow) {
+          state.visits.delete(request.visit_id);
+          renderProjectionRequests();
+        }
+        $('activity-title').textContent = allow ? '已允许 Coo 串门' : '已拒绝 Coo 串门';
+        $('activity-detail').textContent = `${request.visit_id} · ${request.source_instance}`;
+      });
+      actions.appendChild(button);
+    }
+    card.append(title, detail, actions);
+    root.appendChild(card);
+  }
+}
+
+async function closeVisit(visitId, reason = 'host_return') {
+  if (!state.activeVisit || state.activeVisit.visit_id !== visitId) return;
+  clearTimeout(state.activeVisit.ttl);
+  try { await invoke('close_projection_window', { visitId }); } catch (error) { console.error(error); }
+  // Hub-initiated return/revoke has already moved the lease to `returning` and
+  // may be acknowledged as `returned`. A browser close, local tray action,
+  // expiry, or connection failure happens while the lease is still active and
+  // must be reported as `failed`; reporting `returned` from `active` is rejected
+  // by the Hub transition guard and loses the recovery fact.
+  const status = reason === 'persona_return' || reason === 'hub_revoked' ? 'returned' : 'failed';
+  send({ type: 'projection.visit.state', visit_id: visitId, host_id: state.config.hostId, source_instance: state.activeVisit.source_instance, target_host_id: state.config.hostId, status, current_location: 'local', display_anchor: 'bottom', audio_output: 'local', last_transition: reason });
+  invoke('record_host_event', { event: `projection.visit.${status}`, intentId: visitId, detail: `reason=${reason}` }).catch(() => {});
+  state.activeVisit = null;
+  $('activity-title').textContent = 'Coo 已返回';
+  $('activity-detail').textContent = '本机桌面与音频状态等待 Cortico 恢复';
+}
+
+async function receiveVisitGrant(message) {
+  if (message.host_id !== state.config.hostId) return;
+  const request = state.visits.get(message.visit_id);
+    if (!request || request.projection_id !== 'coo-pet') return;
+  state.visits.delete(message.visit_id);
+  renderProjectionRequests();
+  const expiresAt = Number(message.expires_at_ms);
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return;
+  try {
+    await invoke('open_projection_window', { visitId: message.visit_id, projectionId: message.projection_id, expiresAtMs: expiresAt });
+    state.activeVisit = { visit_id: message.visit_id, source_instance: request.source_instance, expires_at_ms: expiresAt, ttl: setTimeout(() => closeVisit(message.visit_id, 'ttl_expired'), expiresAt - Date.now()) };
+    send({ type: 'projection.visit.state', visit_id: message.visit_id, host_id: state.config.hostId, source_instance: request.source_instance, target_host_id: state.config.hostId, status: 'active', current_location: 'remote', display_anchor: 'bottom', audio_output: 'remote', last_transition: 'browser_opened' });
+    invoke('record_host_event', { event: 'projection.visit.active', intentId: message.visit_id, detail: 'projection=coo-pet; display=bottom; audio=remote' }).catch(() => {});
+    $('activity-title').textContent = 'Coo 正在服务器桌面串门';
+    $('activity-detail').textContent = 'Coo 原版页面已打开；结束串门可从 Host 托盘菜单操作';
+  } catch (error) {
+    console.error(error);
+    send({ type: 'projection.visit.state', visit_id: message.visit_id, host_id: state.config.hostId, source_instance: request.source_instance, target_host_id: state.config.hostId, status: 'failed', current_location: 'local', display_anchor: 'bottom', audio_output: 'local', last_transition: 'browser_open_failed' });
+    $('activity-title').textContent = 'Coo 串门未能启动';
+    $('activity-detail').textContent = String(error);
   }
 }
 
@@ -158,7 +232,7 @@ function connect() {
       v: 1,
       type: 'hello',
       device_id: state.config.hostId,
-      caps: { host_presence: true, host_access: true, display: 'host-overlay', speaker: false, microphone: false, camera: false },
+      caps: { host_presence: true, host_access: true, projection_host: true, display: 'host-overlay', speaker: true, microphone: false, camera: false },
     }));
   });
   socket.addEventListener('message', async (event) => {
@@ -168,6 +242,16 @@ function connect() {
       if (message.type === 'presence.intent') await receiveIntent(message);
       if (message.type === 'presence.grant') await receiveGrant(message);
       if (message.type === 'presence.revoke') await receiveRevoke(message);
+      if (message.type === 'projection.visit.request' && message.target_host_id === state.config.hostId && Number(message.expires_at_ms) > Date.now() && message.projection_id === 'coo-pet' && message.display_anchor === 'bottom' && message.audio_mode === 'remote_active') {
+        state.visits.set(message.visit_id, message);
+        renderProjectionRequests();
+        $('activity-title').textContent = '需要确认一次 Coo 串门';
+        $('activity-detail').textContent = `${message.source_instance} · ${message.visit_id}`;
+        invoke('record_host_event', { event: 'projection.visit.prompt', intentId: message.visit_id, detail: 'projection=coo-pet; display=bottom; audio=remote' }).catch(() => {});
+        invoke('show_host_window').catch((error) => console.error('Cannot show projection request window', error));
+      }
+      if (message.type === 'projection.visit.grant') await receiveVisitGrant(message);
+      if (message.type === 'projection.visit.revoke' && state.activeVisit?.visit_id === message.visit_id) await closeVisit(message.visit_id, message.reason || 'hub_revoked');
       if (message.type === 'access.request' && message.target_host_id === state.config.hostId && Number(message.expires_at_ms) > Date.now()) {
         state.access.set(message.request_id, message);
         renderAccessRequests();
@@ -180,6 +264,7 @@ function connect() {
     } catch (error) { console.error('Hub frame failed', error); }
   });
   socket.addEventListener('close', () => {
+    if (state.activeVisit) void closeVisit(state.activeVisit.visit_id, 'hub_disconnected');
     status('Hub 已断开', 'bad');
     state.retry = setTimeout(connect, 3000);
   });
@@ -189,6 +274,7 @@ function connect() {
 async function load() {
   state.config = await invoke('get_host_config');
   $('hub-url').value = state.config.hubWsUrl;
+  $('projection-url').value = state.config.projectionUrl || '';
   $('host-id').value = state.config.hostId;
   $('policy').value = state.config.policy;
   $('activity-detail').textContent = `本机策略：${state.config.policy} · 主机 ${state.config.hostId}`;
@@ -197,7 +283,7 @@ async function load() {
 
 $('save').addEventListener('click', async () => {
   try {
-    state.config = await invoke('save_host_config', { hubWsUrl: $('hub-url').value.trim(), policy: $('policy').value });
+    state.config = await invoke('save_host_config', { hubWsUrl: $('hub-url').value.trim(), projectionUrl: $('projection-url').value.trim(), policy: $('policy').value });
     $('host-id').value = state.config.hostId;
     $('activity-detail').textContent = `设置已保存 · 本机策略 ${state.config.policy}`;
     connect();
@@ -214,6 +300,13 @@ listen('host:revoke-request', () => {
   if (!state.active) return;
   invoke('record_host_event', { event: 'presence.revoke-input', intentId: state.active.intentId, detail: 'source=tray' }).catch(() => {});
   hide(state.active.intentId, true, 'tray_revoked');
+});
+listen('host:visit-return-request', () => {
+  if (state.activeVisit) void closeVisit(state.activeVisit.visit_id, 'tray_return');
+});
+listen('coo-projection-closed', (event) => {
+  const visitId = typeof event.payload === 'string' ? event.payload : event.payload?.visit_id;
+  if (visitId && state.activeVisit?.visit_id === visitId) void closeVisit(visitId, 'browser_closed');
 });
 load().catch((error) => status(`启动失败：${error}`, 'bad'));
 

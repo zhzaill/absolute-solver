@@ -3,6 +3,7 @@ pub mod adapters;
 pub mod cortico;
 pub mod memory;
 pub mod presence;
+pub mod projection;
 pub mod segments;
 pub mod wire;
 
@@ -178,6 +179,11 @@ pub fn trace_event_for_turn(
         Message::PresenceDecision { .. } => ("presence.decision", None),
         Message::PresenceGrant { .. } => ("presence.grant", None),
         Message::PresenceRevoke { .. } => ("presence.revoke", None),
+        Message::ProjectionVisitRequest { .. } => ("projection.visit.request", None),
+        Message::ProjectionVisitDecision { .. } => ("projection.visit.decision", None),
+        Message::ProjectionVisitGrant { .. } => ("projection.visit.grant", None),
+        Message::ProjectionVisitState { .. } => ("projection.visit.state", None),
+        Message::ProjectionVisitRevoke { .. } => ("projection.visit.revoke", None),
         Message::AccessRequest { .. } => ("access.request", None),
         Message::AccessDecision { .. } => ("access.decision", None),
         Message::AccessGrant { .. } => ("access.grant", None),

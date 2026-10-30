@@ -33,6 +33,10 @@ use absolute_solver::{
         ActivePresence, PendingPresence, PresenceManager, MAX_PRESENCE_TTL_MS, MIN_PRESENCE_TTL_MS,
         PRESENCE_NOTIFY_SCOPE, PRESENCE_SHOW_SCOPE,
     },
+    projection::{
+        ProjectionError, ProjectionManager, ProjectionVisit, VisitStatus, AUDIO_MODE_REMOTE_ACTIVE,
+        COO_PET_PROJECTION_ID, DISPLAY_ANCHOR_BOTTOM, MAX_VISIT_TTL_MS, MIN_VISIT_TTL_MS,
+    },
     state_payload, trace_event_for_turn,
     wire::{
         decode_client_message, BinaryMediaFrame, BinaryMediaKind, HubState, Message,
@@ -65,6 +69,7 @@ struct Hub {
     robotics_world_url: String,
     host_tickets: Mutex<BTreeMap<String, u64>>,
     presence: Mutex<PresenceManager>,
+    projection: Mutex<ProjectionManager>,
     access: Mutex<AccessManager>,
     presence_hosts: BTreeSet<String>,
     presence_token: String,
@@ -181,6 +186,37 @@ struct PresenceRevokeRequest {
     intent_id: String,
     #[serde(default = "default_presence_revoke_reason")]
     reason: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ProjectionVisitRequestInput {
+    visit_id: String,
+    source_instance: String,
+    purpose: String,
+    target_host_id: String,
+    projection_id: String,
+    display_anchor: String,
+    audio_mode: String,
+    #[serde(default)]
+    environment_id: Option<String>,
+    ttl_ms: u64,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ProjectionVisitReturnInput {
+    visit_id: String,
+    source_instance: String,
+    #[serde(default = "default_visit_return_reason")]
+    reason: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ProjectionCurrentQuery {
+    source_instance: String,
+}
+
+fn default_visit_return_reason() -> String {
+    "persona_return".into()
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -813,6 +849,11 @@ impl Monitor {
             Message::PresenceDecision { .. } => ("presence.decision", None, None, 0),
             Message::PresenceGrant { .. } => ("presence.grant", None, None, 0),
             Message::PresenceRevoke { .. } => ("presence.revoke", None, None, 0),
+            Message::ProjectionVisitRequest { .. } => ("projection.visit.request", None, None, 0),
+            Message::ProjectionVisitDecision { .. } => ("projection.visit.decision", None, None, 0),
+            Message::ProjectionVisitGrant { .. } => ("projection.visit.grant", None, None, 0),
+            Message::ProjectionVisitState { .. } => ("projection.visit.state", None, None, 0),
+            Message::ProjectionVisitRevoke { .. } => ("projection.visit.revoke", None, None, 0),
             Message::AccessRequest { .. } => ("access.request", None, None, 0),
             Message::AccessDecision { .. } => ("access.decision", None, None, 0),
             Message::AccessGrant { .. } => ("access.grant", None, None, 0),
@@ -991,6 +1032,19 @@ fn body_receives_message(
         Message::PresenceIntent { host_id, .. }
         | Message::PresenceGrant { host_id, .. }
         | Message::PresenceRevoke { host_id, .. } => device_id == Some(host_id.as_str()),
+        Message::ProjectionVisitRequest { target_host_id, .. }
+        | Message::ProjectionVisitGrant {
+            host_id: target_host_id,
+            ..
+        }
+        | Message::ProjectionVisitRevoke {
+            host_id: target_host_id,
+            ..
+        } => device_id == Some(target_host_id.as_str()),
+        // State is a fact for Cortico/World as well as the target Host; it is
+        // never a control message and contains no credentials.
+        Message::ProjectionVisitState { .. } => true,
+        Message::ProjectionVisitDecision { .. } => false,
         Message::AccessRequest {
             target_host_id: host_id,
             ..
@@ -1354,6 +1408,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         robotics_world_url,
         host_tickets: Mutex::new(BTreeMap::new()),
         presence: Mutex::new(PresenceManager::default()),
+        projection: Mutex::new(ProjectionManager::default()),
         access: Mutex::new(AccessManager::default()),
         presence_hosts: std::env::var("SOLVER_PRESENCE_HOSTS")
             .unwrap_or_default()
@@ -1400,6 +1455,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/host/connect", get(host_connect))
         .route("/presence/intent", post(presence_intent))
         .route("/presence/revoke", post(presence_revoke))
+        .route("/projection/visit/request", post(projection_visit_request))
+        .route(
+            "/projection/visit/state/:visit_id",
+            get(projection_visit_state),
+        )
+        .route("/projection/visit/current", get(projection_visit_current))
+        .route(
+            "/projection/host/state/:host_id",
+            get(projection_host_state),
+        )
+        .route("/projection/visit/return", post(projection_visit_return))
         .route("/access/request", post(access_request))
         .route("/access/state/:request_id", get(access_state))
         .route("/access/state", get(access_state_query))
@@ -1682,6 +1748,513 @@ async fn presence_revoke(
         .await;
     let _ = app.hub.outbound.send(message);
     (StatusCode::OK, Json(serde_json::json!({"ok":true}))).into_response()
+}
+
+fn projection_state_message(visit: &ProjectionVisit) -> Message {
+    Message::ProjectionVisitState {
+        visit_id: visit.visit_id.clone(),
+        host_id: visit.target_host_id.clone(),
+        source_instance: visit.source_instance.clone(),
+        target_host_id: visit.target_host_id.clone(),
+        status: visit.status.as_str().into(),
+        current_location: if matches!(visit.status, VisitStatus::Active | VisitStatus::Returning) {
+            "remote"
+        } else {
+            "local"
+        }
+        .into(),
+        display_anchor: visit.display_anchor.clone(),
+        audio_output: if visit.status == VisitStatus::Active {
+            "remote"
+        } else {
+            "local"
+        }
+        .into(),
+        last_transition: visit.last_transition.clone(),
+    }
+}
+
+async fn projection_visit_request(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<ProjectionVisitRequestInput>,
+) -> axum::response::Response {
+    if !valid_presence_token(&headers, &app.hub.presence_token) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error":"unauthorized"})),
+        )
+            .into_response();
+    }
+    if !app.hub.presence_hosts.contains(&input.target_host_id)
+        || !(MIN_VISIT_TTL_MS..=MAX_VISIT_TTL_MS).contains(&input.ttl_ms)
+        || input.projection_id != COO_PET_PROJECTION_ID
+        || input.display_anchor != DISPLAY_ANCHOR_BOTTOM
+        || input.audio_mode != AUDIO_MODE_REMOTE_ACTIVE
+        || input.purpose.trim().is_empty()
+        || input.purpose.chars().count() > 240
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error":"invalid_projection_route"})),
+        )
+            .into_response();
+    }
+    let device = app
+        .hub
+        .monitor
+        .lock()
+        .await
+        .devices
+        .get(&input.target_host_id)
+        .cloned();
+    if !device.as_ref().is_some_and(|device| {
+        device.connected
+            && device
+                .caps
+                .as_ref()
+                .and_then(|caps| caps.get("projection_host"))
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+    }) {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error":"projection_host_offline"})),
+        )
+            .into_response();
+    }
+    let now = wall_ms();
+    let visit = ProjectionVisit {
+        visit_id: input.visit_id.clone(),
+        source_instance: input.source_instance.clone(),
+        purpose: input.purpose.clone(),
+        target_host_id: input.target_host_id.clone(),
+        projection_id: input.projection_id.clone(),
+        display_anchor: input.display_anchor.clone(),
+        audio_mode: input.audio_mode.clone(),
+        environment_id: input.environment_id.clone(),
+        expires_at_ms: now.saturating_add(input.ttl_ms),
+        created_at_ms: now,
+        status: VisitStatus::Requesting,
+        last_transition: "requesting".into(),
+    };
+    if let Err(error) = app.hub.projection.lock().await.issue(visit.clone(), now) {
+        let status = if error == ProjectionError::Busy {
+            StatusCode::CONFLICT
+        } else {
+            StatusCode::BAD_REQUEST
+        };
+        return (
+            status,
+            Json(serde_json::json!({"error":format!("{error:?}")})),
+        )
+            .into_response();
+    }
+    let message = Message::ProjectionVisitRequest {
+        visit_id: visit.visit_id.clone(),
+        source_instance: visit.source_instance.clone(),
+        purpose: visit.purpose.clone(),
+        target_host_id: visit.target_host_id.clone(),
+        projection_id: visit.projection_id.clone(),
+        display_anchor: visit.display_anchor.clone(),
+        audio_mode: visit.audio_mode.clone(),
+        environment_id: visit.environment_id.clone(),
+        expires_at_ms: visit.expires_at_ms,
+    };
+    app.hub
+        .record(
+            "hub",
+            &message,
+            None,
+            format!(
+                "visit_id={}; target={}; projection request",
+                visit.visit_id, visit.target_host_id
+            ),
+        )
+        .await;
+    let _ = app.hub.outbound.send(message);
+    (StatusCode::ACCEPTED, Json(serde_json::json!({"visit_id":visit.visit_id,"expires_at_ms":visit.expires_at_ms,"status":"requesting"}))).into_response()
+}
+
+async fn projection_visit_state(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    Path(visit_id): Path<String>,
+) -> axum::response::Response {
+    if !valid_presence_token(&headers, &app.hub.presence_token) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error":"unauthorized"})),
+        )
+            .into_response();
+    }
+    match app.hub.projection.lock().await.get(&visit_id).cloned() {
+        Some(visit) => (StatusCode::OK, Json(serde_json::json!({
+            "visit_id": visit.visit_id, "source_instance": visit.source_instance, "purpose": visit.purpose, "target_host_id": visit.target_host_id,
+            "projection_id": visit.projection_id, "display_anchor": visit.display_anchor, "audio_mode": visit.audio_mode,
+            "environment_id": visit.environment_id, "expires_at_ms": visit.expires_at_ms, "status": visit.status.as_str(),
+            "created_at_ms": visit.created_at_ms,
+            "current_location": if matches!(visit.status, VisitStatus::Active | VisitStatus::Returning) { "remote" } else { "local" },
+            "last_transition": visit.last_transition,
+        }))).into_response(),
+        None => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error":"unknown_visit"}))).into_response(),
+    }
+}
+
+async fn projection_visit_current(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ProjectionCurrentQuery>,
+) -> axum::response::Response {
+    if !valid_presence_token(&headers, &app.hub.presence_token) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error":"unauthorized"})),
+        )
+            .into_response();
+    }
+    if query.source_instance.trim().is_empty() || query.source_instance.len() > 96 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error":"invalid_source_instance"})),
+        )
+            .into_response();
+    }
+    let now = wall_ms();
+    let visit = app
+        .hub
+        .projection
+        .lock()
+        .await
+        .current_for_source(&query.source_instance, now)
+        .cloned();
+    match visit {
+        Some(visit) => (StatusCode::OK, Json(serde_json::json!({
+            "visit_id": visit.visit_id, "source_instance": visit.source_instance,
+            "target_host_id": visit.target_host_id, "projection_id": visit.projection_id,
+            "status": visit.status.as_str(), "current_location": if matches!(visit.status, VisitStatus::Active | VisitStatus::Returning) { "remote" } else { "local" },
+            "projection_status": visit.status.as_str(), "display_anchor": visit.display_anchor,
+            "audio_output": if visit.status == VisitStatus::Active { "remote" } else { "local" },
+            "expires_at_ms": visit.expires_at_ms, "last_transition": visit.last_transition,
+        }))).into_response(),
+        None => (StatusCode::OK, Json(serde_json::json!({
+            "source_instance": query.source_instance, "status":"idle", "current_location":"local",
+            "projection_status":"disconnected", "display_anchor":null, "audio_output":"local",
+            "visit_id":null, "expires_at_ms":null, "last_transition":"no_active_visit"
+        }))).into_response(),
+    }
+}
+
+async fn projection_host_state(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    Path(host_id): Path<String>,
+) -> axum::response::Response {
+    if !valid_presence_token(&headers, &app.hub.presence_token) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error":"unauthorized"})),
+        )
+            .into_response();
+    }
+    if !app.hub.presence_hosts.contains(&host_id) {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error":"unknown_host"})),
+        )
+            .into_response();
+    }
+    let device = app.hub.monitor.lock().await.devices.get(&host_id).cloned();
+    let online = device.as_ref().is_some_and(|device| device.connected);
+    let projection_capable = device
+        .as_ref()
+        .and_then(|device| device.caps.as_ref())
+        .and_then(|caps| caps.get("projection_host"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let visit = app
+        .hub
+        .projection
+        .lock()
+        .await
+        .active_for_host(&host_id, wall_ms())
+        .cloned();
+    (StatusCode::OK, Json(serde_json::json!({
+        "host_id":host_id, "online":online, "projection_capable":projection_capable,
+        "projection_status": if !online || !projection_capable { "disconnected" } else if visit.is_some() { "active" } else { "idle" },
+        "visit_id":visit.map(|visit| visit.visit_id),
+    }))).into_response()
+}
+
+async fn projection_visit_return(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<ProjectionVisitReturnInput>,
+) -> axum::response::Response {
+    if !valid_presence_token(&headers, &app.hub.presence_token) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error":"unauthorized"})),
+        )
+            .into_response();
+    }
+    let result = {
+        let mut projection = app.hub.projection.lock().await;
+        let Some(existing) = projection.get(&input.visit_id) else {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error":"unknown_visit"})),
+            )
+                .into_response();
+        };
+        if existing.source_instance != input.source_instance {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({"error":"source_mismatch"})),
+            )
+                .into_response();
+        }
+        projection.begin_return(&input.visit_id, wall_ms())
+    };
+    match result {
+        Ok(visit) => {
+            let message = Message::ProjectionVisitRevoke {
+                visit_id: visit.visit_id.clone(),
+                host_id: visit.target_host_id.clone(),
+                reason: input
+                    .reason
+                    .chars()
+                    .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+                    .take(64)
+                    .collect(),
+            };
+            app.hub
+                .record(
+                    "hub",
+                    &message,
+                    None,
+                    format!("visit_id={}; return requested", visit.visit_id),
+                )
+                .await;
+            let _ = app.hub.outbound.send(message);
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({"ok":true,"status":"returning"})),
+            )
+                .into_response()
+        }
+        Err(error) => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error":format!("{error:?}")})),
+        )
+            .into_response(),
+    }
+}
+
+async fn handle_projection_visit_decision(
+    hub: &Arc<Hub>,
+    direct_tx: &mpsc::Sender<Message>,
+    connected_host: Option<&str>,
+    visit_id: String,
+    host_id: String,
+    allow: bool,
+) {
+    if connected_host != Some(host_id.as_str()) {
+        send_direct_message(
+            hub,
+            direct_tx,
+            Message::ProtocolError {
+                code: "projection_host_mismatch".into(),
+                message: "projection decision host does not match this connection".into(),
+                fatal: false,
+            },
+            "projection decision rejected",
+        )
+        .await;
+        return;
+    }
+    let result = hub
+        .projection
+        .lock()
+        .await
+        .decide(&host_id, &visit_id, allow, wall_ms());
+    match result {
+        Ok(visit) => {
+            let decision = Message::ProjectionVisitDecision {
+                visit_id: visit_id.clone(),
+                host_id: host_id.clone(),
+                allow,
+            };
+            hub.record(
+                "body->hub",
+                &decision,
+                None,
+                format!("visit_id={visit_id}; host={host_id}; allow={allow}"),
+            )
+            .await;
+            if allow {
+                let grant = Message::ProjectionVisitGrant {
+                    visit_id: visit.visit_id.clone(),
+                    host_id: visit.target_host_id.clone(),
+                    projection_id: visit.projection_id.clone(),
+                    expires_at_ms: visit.expires_at_ms,
+                };
+                hub.record(
+                    "hub",
+                    &grant,
+                    None,
+                    format!("visit_id={}; host approved", visit.visit_id),
+                )
+                .await;
+                let _ = hub.outbound.send(grant);
+            }
+            let state = projection_state_message(&visit);
+            hub.record(
+                "hub",
+                &state,
+                None,
+                format!(
+                    "visit_id={}; host decision={}",
+                    visit.visit_id,
+                    if allow { "approved" } else { "rejected" }
+                ),
+            )
+            .await;
+            let _ = hub.outbound.send(state);
+        }
+        Err(error) => {
+            send_direct_message(
+                hub,
+                direct_tx,
+                Message::ProtocolError {
+                    code: "projection_decision_rejected".into(),
+                    message: format!("projection decision rejected: {error:?}"),
+                    fatal: false,
+                },
+                "projection decision rejected",
+            )
+            .await
+        }
+    }
+}
+
+async fn handle_projection_visit_state(
+    hub: &Arc<Hub>,
+    direct_tx: &mpsc::Sender<Message>,
+    connected_host: Option<&str>,
+    message: Message,
+) {
+    let Message::ProjectionVisitState {
+        visit_id,
+        host_id,
+        status,
+        current_location,
+        display_anchor,
+        audio_output,
+        last_transition,
+        ..
+    } = message
+    else {
+        return;
+    };
+    let Some(parsed_status) = VisitStatus::parse(&status) else {
+        send_direct_message(
+            hub,
+            direct_tx,
+            Message::ProtocolError {
+                code: "projection_state_invalid".into(),
+                message: "unknown projection state".into(),
+                fatal: false,
+            },
+            "projection state rejected",
+        )
+        .await;
+        return;
+    };
+    if connected_host != Some(host_id.as_str())
+        || !matches!(
+            parsed_status,
+            VisitStatus::Active | VisitStatus::Failed | VisitStatus::Returned
+        )
+    {
+        send_direct_message(
+            hub,
+            direct_tx,
+            Message::ProtocolError {
+                code: "projection_state_mismatch".into(),
+                message: "projection state does not match this connection or allowed transition"
+                    .into(),
+                fatal: false,
+            },
+            "projection state rejected",
+        )
+        .await;
+        return;
+    }
+    let result = hub
+        .projection
+        .lock()
+        .await
+        .report(&host_id, &visit_id, parsed_status, wall_ms());
+    match result {
+        Ok(visit) => {
+            let state = Message::ProjectionVisitState {
+                visit_id: visit.visit_id.clone(),
+                host_id: visit.target_host_id.clone(),
+                status: visit.status.as_str().into(),
+                source_instance: visit.source_instance.clone(),
+                target_host_id: visit.target_host_id.clone(),
+                current_location: if matches!(
+                    visit.status,
+                    VisitStatus::Active | VisitStatus::Returning
+                ) {
+                    "remote"
+                } else {
+                    "local"
+                }
+                .into(),
+                display_anchor: visit.display_anchor.clone(),
+                audio_output: if visit.status == VisitStatus::Active {
+                    "remote"
+                } else {
+                    "local"
+                }
+                .into(),
+                last_transition: visit.last_transition.clone(),
+            };
+            let _ = (
+                current_location,
+                display_anchor,
+                audio_output,
+                last_transition,
+            );
+            hub.record(
+                "body->hub",
+                &state,
+                None,
+                format!(
+                    "visit_id={}; host reports {}",
+                    visit.visit_id,
+                    visit.status.as_str()
+                ),
+            )
+            .await;
+            let _ = hub.outbound.send(state);
+        }
+        Err(error) => {
+            send_direct_message(
+                hub,
+                direct_tx,
+                Message::ProtocolError {
+                    code: "projection_state_rejected".into(),
+                    message: format!("projection state rejected: {error:?}"),
+                    fatal: false,
+                },
+                "projection state rejected",
+            )
+            .await
+        }
+    }
 }
 
 async fn access_request(
@@ -2293,6 +2866,31 @@ async fn presence_expiry_loop(hub: Arc<Hub>) {
             )
             .await;
             let _ = hub.outbound.send(message);
+        }
+        let expired_visits = hub.projection.lock().await.prune(wall_ms());
+        for visit in expired_visits {
+            let revoke = Message::ProjectionVisitRevoke {
+                visit_id: visit.visit_id.clone(),
+                host_id: visit.target_host_id.clone(),
+                reason: "ttl_expired".into(),
+            };
+            hub.record(
+                "hub",
+                &revoke,
+                None,
+                format!("visit_id={}; projection TTL expired", visit.visit_id),
+            )
+            .await;
+            let _ = hub.outbound.send(revoke);
+            let state = projection_state_message(&visit);
+            hub.record(
+                "hub",
+                &state,
+                None,
+                format!("visit_id={}; location restored to local", visit.visit_id),
+            )
+            .await;
+            let _ = hub.outbound.send(state);
         }
     }
 }
@@ -3416,6 +4014,30 @@ async fn handle_socket(socket: WebSocket, hub: Arc<Hub>) {
                 handle_presence_decision(&hub, &direct_tx, connected_device.as_deref(), message)
                     .await;
             }
+            Message::ProjectionVisitDecision {
+                visit_id,
+                host_id,
+                allow,
+            } => {
+                handle_projection_visit_decision(
+                    &hub,
+                    &direct_tx,
+                    connected_device.as_deref(),
+                    visit_id,
+                    host_id,
+                    allow,
+                )
+                .await;
+            }
+            Message::ProjectionVisitState { .. } => {
+                handle_projection_visit_state(
+                    &hub,
+                    &direct_tx,
+                    connected_device.as_deref(),
+                    message,
+                )
+                .await;
+            }
             Message::AccessDecision {
                 request_id,
                 host_id,
@@ -3444,6 +4066,9 @@ async fn handle_socket(socket: WebSocket, hub: Arc<Hub>) {
             | Message::AccessGrant { .. }
             | Message::AccessRevoke { .. }
             | Message::AccessResult { .. } => {}
+            Message::ProjectionVisitRequest { .. }
+            | Message::ProjectionVisitGrant { .. }
+            | Message::ProjectionVisitRevoke { .. } => {}
             Message::TurnStarted { .. } | Message::ProtocolError { .. } => {}
         }
     }
@@ -3477,6 +4102,18 @@ async fn handle_socket(socket: WebSocket, hub: Arc<Hub>) {
         next_connected_body(&monitor.devices, connected_device.as_deref())
     };
     if let Some(device_id) = &connected_device {
+        let disconnected_visits = hub.projection.lock().await.host_disconnected(device_id);
+        for visit in disconnected_visits {
+            let state = projection_state_message(&visit);
+            hub.record(
+                "hub",
+                &state,
+                None,
+                format!("visit_id={}; target host disconnected", visit.visit_id),
+            )
+            .await;
+            let _ = hub.outbound.send(state);
+        }
         let cancelled = hub.access.lock().await.host_disconnected(device_id);
         for request_id in cancelled {
             let message = Message::AccessResult {
@@ -4561,6 +5198,7 @@ mod tests {
                 robotics_world_url: String::new(),
                 host_tickets: Mutex::new(BTreeMap::new()),
                 presence: Mutex::new(PresenceManager::default()),
+                projection: Mutex::new(ProjectionManager::default()),
                 access: Mutex::new(AccessManager::default()),
                 presence_hosts: BTreeSet::new(),
                 presence_token: String::new(),
