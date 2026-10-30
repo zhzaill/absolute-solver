@@ -125,6 +125,7 @@ catch { "POST /access/request = " + $(if ($_.Exception.Response) { $_.Exception.
 "host_running=" + ((Get-Process -Name 'absolute-solver-host' -ErrorAction SilentlyContinue | Measure-Object).Count)
 '@
     if ($Action -eq 'host') {
+        $script += "`r`n"
         $script += @'
 $cfg = 'C:\Users\zhzaill\AppData\Roaming\net.absolutesolver.host\host.json'
 New-Item -ItemType Directory -Force -Path (Split-Path $cfg) | Out-Null
