@@ -397,6 +397,168 @@
     },
     {
       "properties": {
+        "environment_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expires_at_ms": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "purpose": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "source_instance": {
+          "type": "string"
+        },
+        "target_host_id": {
+          "type": "string"
+        },
+        "target_service": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "access.request"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "expires_at_ms",
+        "operation",
+        "purpose",
+        "request_id",
+        "source_instance",
+        "target_host_id",
+        "target_service",
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "allow": {
+          "type": "boolean"
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "access.decision"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "allow",
+        "host_id",
+        "request_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "expires_at_ms": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "grant_id": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "target_host_id": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "access.grant"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "expires_at_ms",
+        "grant_id",
+        "request_id",
+        "target_host_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "target_host_id": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "access.revoke"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason",
+        "request_id",
+        "target_host_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "access.result"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "status",
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
         "turn": {
           "format": "uint64",
           "minimum": 0.0,
@@ -511,6 +673,11 @@
               "presence.decision",
               "presence.grant",
               "presence.revoke",
+              "access.request",
+              "access.decision",
+              "access.grant",
+              "access.revoke",
+              "access.result",
               "turn.started",
               "segment.receipt",
               "protocol.error"

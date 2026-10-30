@@ -1,7 +1,7 @@
 {
   "name": "cortico-world-absolute-solver",
-  "version": "0.2.1",
-  "description": "Cortico World showing the Absolute Solver LAN projection page, usage guidance, and service directory.",
+  "version": "0.3.0",
+  "description": "在局域网打开 Coo 原版桌宠网页，查看服务状态并申请一次性 TTS/ASR 访问许可。",
   "license": "MIT",
   "repository": {
     "type": "git",

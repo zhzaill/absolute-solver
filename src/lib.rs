@@ -1,3 +1,4 @@
+pub mod access;
 pub mod adapters;
 pub mod cortico;
 pub mod memory;
@@ -177,6 +178,11 @@ pub fn trace_event_for_turn(
         Message::PresenceDecision { .. } => ("presence.decision", None),
         Message::PresenceGrant { .. } => ("presence.grant", None),
         Message::PresenceRevoke { .. } => ("presence.revoke", None),
+        Message::AccessRequest { .. } => ("access.request", None),
+        Message::AccessDecision { .. } => ("access.decision", None),
+        Message::AccessGrant { .. } => ("access.grant", None),
+        Message::AccessRevoke { .. } => ("access.revoke", None),
+        Message::AccessResult { .. } => ("access.result", None),
         Message::TurnStarted { .. } => ("turn.started", None),
         Message::SegmentReceipt { seq, .. } => ("segment.receipt", Some(*seq)),
         Message::ProtocolError { .. } => ("protocol.error", None),

@@ -8,7 +8,10 @@ export const ABSOLUTE_SOLVER = {
   preflight: ({ cfg }) => {
     if (!cfg.directoryUrl) throw new Error('Absolute Solver 服务目录地址为空');
   },
-  create: (ctx) => new AbsoluteSolverWorld({ cfg: ctx.cfg }),
+  create: (ctx) => new AbsoluteSolverWorld({
+    cfg: ctx.cfg,
+    secret: typeof ctx.secret === 'function' ? ctx.secret : undefined,
+  }),
 };
 
 export default ABSOLUTE_SOLVER;

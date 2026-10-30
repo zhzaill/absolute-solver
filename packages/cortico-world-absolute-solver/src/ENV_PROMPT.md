@@ -10,3 +10,5 @@ Absolute Solver Host 投影为同一可信局域网提供 Coo 原生桌宠页面
 - 投影网页复用 Coo 原有交互和 TTS；LAN 浏览器的声音由打开该网页的设备播放。普通 HTTP LAN 地址不满足浏览器麦克风安全上下文要求，语音采集需 HTTPS 且设备信任证书。
 
 目录中的在线状态来自服务健康请求；Host 在线、服务在线和用户授权是不同事实。这个 World 只提供网页入口、使用说明和服务发现，不授予访问权限，不执行插件动作，不替代 Hub、Body 或 Coo 的运行时。
+
+访问另一台 Host 上的 TTS 或 ASR 前，使用 `solver_request_access` 提出一次具名请求，并用 `solver_access_status` 读取状态。许可由目标 Host 本地确认。工具不会返回 grant、凭据或完整音频；实际 TTS/ASR 请求仍由现有插件发往 Host Agent。

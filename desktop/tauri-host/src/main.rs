@@ -85,6 +85,14 @@ fn get_host_config(state: State<'_, HostState>) -> Result<HostConfig, String> {
 }
 
 #[tauri::command]
+fn show_host_window(window: WebviewWindow) -> Result<(), String> {
+    window
+        .show()
+        .and_then(|_| window.set_focus())
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn save_host_config(
     hub_ws_url: String,
     policy: String,
@@ -101,10 +109,7 @@ fn save_host_config(
     {
         return Err("Hub 地址必须使用 ws:// 或 wss://".into());
     }
-    let mut config = state
-        .config
-        .lock()
-        .map_err(|_| "配置锁不可用".to_owned())?;
+    let mut config = state.config.lock().map_err(|_| "配置锁不可用".to_owned())?;
     config.hub_ws_url = hub_ws_url;
     config.policy = policy;
     write_config(&state.config_path, &config)?;
@@ -150,10 +155,7 @@ fn show_presence_overlay(
     window: WebviewWindow,
     state: State<'_, HostState>,
 ) -> Result<(), String> {
-    let config = state
-        .config
-        .lock()
-        .map_err(|_| "配置锁不可用".to_owned())?;
+    let config = state.config.lock().map_err(|_| "配置锁不可用".to_owned())?;
     if config.policy != "appear" || host_id != config.host_id || scope != SHOW_SCOPE {
         return Err("本机策略或 presence grant 不允许显示".into());
     }
@@ -163,9 +165,7 @@ fn show_presence_overlay(
     *state
         .active
         .lock()
-        .map_err(|_| "覆盖层状态不可用".to_owned())? = Some(ActiveOverlay {
-        intent_id,
-    });
+        .map_err(|_| "覆盖层状态不可用".to_owned())? = Some(ActiveOverlay { intent_id });
     window
         .set_always_on_top(true)
         .and_then(|_| window.set_decorations(false))
@@ -250,7 +250,8 @@ fn main() {
 
             let open = MenuItem::with_id(app, "open", "打开设置面板", true, None::<&str>)?;
             let revoke = MenuItem::with_id(app, "revoke", "撤销显示并隐藏", true, None::<&str>)?;
-            let exit = MenuItem::with_id(app, "exit", "退出 Absolute Solver Host", true, None::<&str>)?;
+            let exit =
+                MenuItem::with_id(app, "exit", "退出 Absolute Solver Host", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &revoke, &exit])?;
             let _tray = TrayIconBuilder::new()
                 .icon(tray_icon())
@@ -287,6 +288,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             get_host_config,
+            show_host_window,
             save_host_config,
             record_host_event,
             show_presence_overlay,

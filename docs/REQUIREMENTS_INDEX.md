@@ -48,6 +48,8 @@
 
 ### P1：核心可用链路
 
+二阶段跨主机访问许可（2026-10-29）：代码闭环已实现但仍为 `in_progress`；许可关联为 Hub 单飞 + request_id 标识校验 + Coo 登记制 Broker，本机彩排和 Windows Agent/Broker 直接启动冒烟通过。服务器隔离 Hub/Gateway/Agent/Broker 已运行，一条请求已登记但目标机失联前仍为 pending，尚无 TTS/ASR 结果、撤销/过期和回滚证据，不能 accepted。生产 Coo endpoint/Gateway 未改；已回显的生产 TTS key 仍待轮换。任务卡：`docs/tasks/2026-10-29-access-grant.md`；报告：`D:\11\Logs\2026-10-29-absolute-solver-access-grant.md`、`D:\11\Logs\2026-10-29-access-grant-request-binding.md`。
+
 | 领域 | 主文档 | 当前状态 | 硬要求 |
 |---|---|---|---|
 | TTS | `docs/TTS_REQUIREMENTS.md` | Native Audio Body 闭环完成（2026-10-26 实跑验收，报告 `D:\11\Logs\2026-10-26-Absolute-Solver-TTS正式验收.md`）；TTS Provider 已切为局域网 OpenAI 远程服务（2026-10-27）；Coo `tts.voice` 附件已由 Host 同源接口交付并在 Host 浏览器端播放验证；第二台 LAN 设备仍待人工验收 | Hub 调 API，解码 PCM16，按客户端能力发送；Coo TTS 与 Solver Native Body 是两条不同路径，验收证据不能互相替代 |

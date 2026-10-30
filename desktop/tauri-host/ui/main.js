@@ -1,7 +1,7 @@
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 const $ = (id) => document.getElementById(id);
-const state = { config: null, socket: null, retry: null, active: null, ttl: null };
+const state = { config: null, socket: null, retry: null, active: null, ttl: null, access: new Map() };
 const showScope = 'presence:show';
 
 function status(text, kind = '') {
@@ -23,6 +23,38 @@ function setOverlay(active, reason = '') {
     initMatrixEffect();
   } else {
     stopMatrixEffect();
+  }
+}
+
+function renderAccessRequests() {
+  const root = $('access-requests');
+  root.replaceChildren();
+  if (!state.access.size) { root.textContent = '当前没有待确认请求'; root.className = 'access-empty'; return; }
+  root.className = '';
+  for (const request of state.access.values()) {
+    const card = document.createElement('article');
+    card.className = 'access-request';
+    const title = document.createElement('b');
+    title.textContent = `${request.source_instance} 请求访问 ${request.target_service === 'tts' ? 'TTS' : 'ASR'}`;
+    const detail = document.createElement('p');
+    detail.textContent = `操作：${request.operation} · 原因：${request.purpose} · 剩余 ${Math.max(0, Math.ceil((Number(request.expires_at_ms) - Date.now()) / 1000))} 秒`;
+    const actions = document.createElement('div');
+    actions.className = 'access-actions';
+    for (const [label, allow] of [['允许一次', true], ['拒绝', false]]) {
+      const button = document.createElement('button');
+      button.textContent = label;
+      if (!allow) button.className = 'deny';
+      button.addEventListener('click', () => {
+        if (!send({ type: 'access.decision', request_id: request.request_id, host_id: state.config.hostId, allow })) return;
+        state.access.delete(request.request_id);
+        renderAccessRequests();
+        $('activity-title').textContent = allow ? '已允许一次服务访问' : '已拒绝服务访问';
+        $('activity-detail').textContent = `${request.source_instance} · ${request.target_service} · ${request.operation}`;
+      });
+      actions.appendChild(button);
+    }
+    card.append(title, detail, actions);
+    root.appendChild(card);
   }
 }
 
@@ -126,7 +158,7 @@ function connect() {
       v: 1,
       type: 'hello',
       device_id: state.config.hostId,
-      caps: { host_presence: true, display: 'host-overlay', speaker: false, microphone: false, camera: false },
+      caps: { host_presence: true, host_access: true, display: 'host-overlay', speaker: false, microphone: false, camera: false },
     }));
   });
   socket.addEventListener('message', async (event) => {
@@ -136,6 +168,15 @@ function connect() {
       if (message.type === 'presence.intent') await receiveIntent(message);
       if (message.type === 'presence.grant') await receiveGrant(message);
       if (message.type === 'presence.revoke') await receiveRevoke(message);
+      if (message.type === 'access.request' && message.target_host_id === state.config.hostId && Number(message.expires_at_ms) > Date.now()) {
+        state.access.set(message.request_id, message);
+        renderAccessRequests();
+        $('activity-title').textContent = '需要确认一次服务访问';
+        $('activity-detail').textContent = `${message.source_instance} · ${message.target_service} · ${message.operation}`;
+        invoke('record_host_event', { event: 'access.request.prompt', intentId: message.request_id, detail: `${message.source_instance} · ${message.target_service} · ${message.operation}` }).catch(() => {});
+        invoke('show_host_window').catch((error) => console.error('Cannot show access request window', error));
+      }
+      if (message.type === 'access.result') { state.access.delete(message.request_id); renderAccessRequests(); }
     } catch (error) { console.error('Hub frame failed', error); }
   });
   socket.addEventListener('close', () => {

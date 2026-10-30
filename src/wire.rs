@@ -88,6 +88,44 @@ pub enum Message {
         host_id: String,
         reason: String,
     },
+    #[serde(rename = "access.request")]
+    AccessRequest {
+        request_id: String,
+        source_instance: String,
+        target_host_id: String,
+        target_service: String,
+        operation: String,
+        purpose: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        environment_id: Option<String>,
+        expires_at_ms: u64,
+    },
+    #[serde(rename = "access.decision")]
+    AccessDecision {
+        request_id: String,
+        host_id: String,
+        allow: bool,
+    },
+    #[serde(rename = "access.grant")]
+    AccessGrant {
+        request_id: String,
+        grant_id: String,
+        target_host_id: String,
+        expires_at_ms: u64,
+    },
+    #[serde(rename = "access.revoke")]
+    AccessRevoke {
+        request_id: String,
+        target_host_id: String,
+        reason: String,
+    },
+    #[serde(rename = "access.result")]
+    AccessResult {
+        request_id: String,
+        status: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
     #[serde(rename = "turn.started")]
     TurnStarted { turn: u64 },
     /// Body→Hub segment receipt. Observability only: it must never change send
@@ -132,6 +170,11 @@ impl Message {
             | Self::PresenceDecision { .. }
             | Self::PresenceGrant { .. }
             | Self::PresenceRevoke { .. }
+            | Self::AccessRequest { .. }
+            | Self::AccessDecision { .. }
+            | Self::AccessGrant { .. }
+            | Self::AccessRevoke { .. }
+            | Self::AccessResult { .. }
             | Self::ProtocolError { .. } => None,
         }
     }
@@ -307,7 +350,7 @@ pub enum WireDecodeError {
 }
 
 /// Wire names of every message type defined by protocol v1.
-pub const MESSAGE_TYPES: [&str; 14] = [
+pub const MESSAGE_TYPES: [&str; 19] = [
     "hello",
     "audio.up",
     "say",
@@ -319,6 +362,11 @@ pub const MESSAGE_TYPES: [&str; 14] = [
     "presence.decision",
     "presence.grant",
     "presence.revoke",
+    "access.request",
+    "access.decision",
+    "access.grant",
+    "access.revoke",
+    "access.result",
     "turn.started",
     "segment.receipt",
     "protocol.error",

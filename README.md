@@ -1,92 +1,74 @@
 # Absolute Solver
 
-Absolute Solver 是一个部署在可信局域网内、让同一个 Cortico Persona 可从不同设备访问的私人运行时。局域网交互网页是核心入口，Coo、桌面、手机和树莓派应复用同一客户端协议；Cortico 负责 Persona、World、记忆与语义决策，Hub 负责会话/权限/音频路由及设备事实。首个网页文本闭环位于 Hub 的 `/app`：浏览器注册为 Body，文本经 `persona.expression` 适配路径进入 Hub，再由 TTS 返回浏览器播放和字幕。Coo/手机/Pi 的独立验收仍待完成。Hub 当前没有中心身份认证，不能直接暴露到公网。
+让同一个 Cortico/Coo 桌宠出现在你的电脑、手机、浏览器和树莓派上。你只需要打开一个局域网网址；桌宠页面、对话、动作和声音仍然由 Coo 原版服务提供，Absolute Solver 负责把设备连接起来。
 
-## 当前状态
+## 先看能不能用
 
-- 应用版本：`0.3.0`；协议：WebSocket v1，支持可选 PCM16 二进制音频帧。
-- Native TTS、分段生成与播放、首段先播、打断、active Body handoff、段级回执、整轮预算和 trace 重启恢复已有代码与运行验收证据。
-- ASR Provider 与完整音频经 Hub 的回放链路已验证；实麦人工朗读条件由任务制定者因环境免除，源 WAV 直连 Provider 逐字正确。实麦设备诊断保留为可选补证。
-- 当前测试与计数以 `D:\11\Logs` 的最新验收报告和 `docs/ABSOLUTE_SOLVER_CURRENT_STATE.md` 为准；不要使用历史 README 中的旧测试数字。
-- 远程 Git 仓库为公开源码仓库。生产运行仍应限制在可信局域网；当前没有 `v0.3.0` tag 或 Release。
+这是一个给自有设备使用的可信局域网项目，不是公网 SaaS。最简单的可用组合是：
 
-测试通过不等于运行证据齐全。凭据轮换、Hub 网络边界、构建哈希、部署回滚和 trace 归档映射仍是长期运行或内部版本标记前的收束项，不构成公开发布计划。
+- 一台电脑运行 Cortico/Coo；
+- 一台电脑运行 Absolute Solver Hub 和 TTS；
+- 两台设备在同一个局域网；
+- Coo 的 `tts` 和 `audio-play` World 已启用。
 
-权威当前快照与证据索引见[当前可信项目现状](docs/ABSOLUTE_SOLVER_CURRENT_STATE.md)；历史工程决策、失败根因和可复用验收经验见[工程经验账本](docs/EXPERIENCE_LEDGER.md)；需求入口见[需求索引](docs/REQUIREMENTS_INDEX.md)。运行状态以代码、测试输出和 `D:\11\Logs` 验收证据为准，计划文档不能单独改变状态。
+## 五分钟试用
 
-## 架构
+1. 在服务器确认 TTS：打开 `http://服务器地址:18080/healthz`，看到 `"ok":true`。
+2. 在运行 Coo 的电脑启动投影入口：
 
-```text
-Browser / Coo / Desktop / Phone / Pi ── WebSocket v1 ──> Hub ──> Cortico / ASR / LLM / TTS
-       │                               │
-       ├─ 麦克风采集                  ├─ 回合编排与权限判断
-       ├─ 本地播放                    ├─ Body 路由与 active handoff
-       └─ 字幕/渲染                   ├─ 记忆与运行监控
-                                       └─ JSONL trace
-```
+   ```powershell
+   node tools/host-projection.mjs
+   ```
 
-- **Hub**：持有回合状态，编排 Provider，选择 active Body，并记录可观测元数据。
-- **Body**：执行麦克风采集、音频播放和渲染；不持有会话主状态。当前核心验收对象是 Native Audio Body；其他 Body 属于扩展。
-- **Provider**：ASR、LLM 和 TTS 通过适配器接入，可与 Hub/Body 分机部署。
-- **Host Panel/Presence**：提供可选的用户发起 Host presence 流程；Presence token 不是 Hub 全局认证机制。
+3. 在同一台电脑或手机打开：
 
-## 协议与边界
+   ```text
+   http://运行Coo的电脑地址:18111/
+   ```
 
-线上规范以 [协议 v1](docs/protocol.md)、`src/wire.rs` 和 `schemas/` 为准。`docs/WIRE_PROTOCOL_V2.md` 是未采纳设计稿，不代表线上协议。当前保持 WebSocket v1 + 二进制媒体，没有迁移 gRPC。
+4. 页面就是 Coo 原版桌宠页面。点桌宠的对话按钮，输入一句话；Coo 的原版 TTS 会生成 `tts.voice`，`audio-play` 会在运行 Coo 的这台设备上播放。
 
-当前安全边界：Hub HTTP API 与局域网 WebSocket 尚无中心认证且未加密；不要将 Hub 暴露到公网。历史部署日志中的明文凭据已脱敏，但凭据轮换仍未执行。
+5. 查看服务是否在线：打开同一地址的 `/services`。
 
-主要未完成事项：Provider 流式 PCM、Presence 生命周期审计、凭据轮换、trace 连续性说明，以及可选的机器人实体导航/运动验收。面板和多 Body 不属于当前核心运行时前置条件。
+第一次播放前，先在页面点一下或按一下键，让浏览器解锁声音。手机浏览器可以播放声音；原版语音输入需要 HTTPS，普通 HTTP 局域网地址不能申请麦克风。
 
-## 最小网页闭环
+## 这套东西负责什么
 
-启动 Hub 后打开 `http://<hub-host>:18100/app`。首轮验证时确保浏览器是唯一连接的 speaker Body，因为 Hub 当前不支持客户端主动切换 active Body。网页会注册为浏览器 Body，发送文本后通过现有 `persona.expression` 适配路径触发 Hub TTS，接收 PCM16 音频并在浏览器扬声器播放，同时显示字幕。浏览器需允许音频播放；第一次发送会唤醒音频上下文。这条路径验证 Hub 与网页 Body 的协议和播放回执，不替代 Cortico 的自然事件到 Persona 决策验收。页面当前没有操作者认证/配对，仅用于受信 LAN 开发验证，不应放入不可信网络。
+- **Coo/Cortico**：Persona、对话、记忆、桌宠形象、动作、TTS 语义和插件。
+- **Hub**：设备连接、回合、音频路由、一次性访问许可和运行事实。
+- **Body/投影页面**：播放声音、显示 Coo、报告设备状态。
+- **服务目录**：只读展示 Cortico、Coo、TTS、ASR、LLM 等真实服务状态。
 
-## 构建与测试
+投影层不重画大肥鱼，不复制 Coo 的聊天框、动作词表或 Persona。打开网页看到的就是 Coo 原版桌宠。
 
-需要 Rust stable 工具链。运行：
+## 二阶段访问许可
+
+仓库里的 `access.*`、Host Agent 和 `cortico-world-absolute-solver` 已通过自动化测试。真实跨主机 TTS/ASR 仍需要目标机器前的人点击一次 Allow，因此当前不能称为生产验收通过，也不会自动替换你现在已经能用的直连 TTS。
+
+想先自己检查访问许可合同，双击 `tools/stage2-rehearse.cmd`。它只使用本机临时模拟服务，不会连接生产 Hub、服务器或 TTS。
+
+## 常见问题
+
+**页面能开但没有声音**
+
+在运行 Coo 的电脑确认 `audio-play` 为 active、播放后端为 Windows WPF MediaPlayer，并在页面先点一下。再看 Cortico 的 World 状态：`tts` 应显示 online，`audio-play` 应显示本机扬声器 online。
+
+**服务器刚睡醒，TTS 不响应**
+
+先访问 `/healthz`。如果不是 `"ok":true`，重启服务器上的 TTS 上游和网关任务，再等待模型加载完成；第一次合成可能需要几十秒。
+
+**手机能看但不能录音**
+
+这是浏览器安全规则。给投影入口配置 HTTPS 并让手机信任证书，或者先用 Coo 本机桌面窗口输入文字。
+
+## 开发与验证
+
+需要 Rust stable 和 Node 22：
 
 ```powershell
 cargo fmt --check
 cargo test
-cargo build --release
+node --test tools/*.test.mjs packages/cortico-world-absolute-solver/test/world.test.mjs
 ```
 
-主要程序：
-
-- `absolute-solver-hub`
-- `absolute-solver-body`
-- `absolute-solver-protocol-schema`
-
-生成协议 schema：
-
-```powershell
-cargo run --bin absolute-solver-protocol-schema -- schemas
-```
-
-## 核心配置
-
-| 环境变量 | 默认值 | 用途 |
-|---|---|---|
-| `SOLVER_HUB_LISTEN` | `0.0.0.0:18100` | Hub 监听地址 |
-| `SOLVER_TRACE` | `trace/absolute-solver.jsonl` | JSONL 运行 trace |
-| `SOLVER_MEMORY_DB` | `data/absolute-solver-memory.sqlite3` | SQLite 记忆数据库 |
-| `SOLVER_ASR_URL` | `http://127.0.0.1:9881` | ASR 兼容接口 |
-| `SOLVER_TTS_URL` | `http://127.0.0.1:18080` | TTS 兼容接口 |
-| `SOLVER_LLM_URL` | 空 | LLM 兼容接口 |
-| `SOLVER_LLM_MODEL` | 空 | LLM 模型名 |
-| `SOLVER_LLM_API_KEY` | 空 | 可选 bearer token；不得提交到仓库 |
-| `SOLVER_CAPTURE_SECONDS` | `0` | Body 单次麦克风采集时长；仅显式设为 1-30 秒时启用 |
-
-## 目录
-
-```text
-src/wire.rs                  协议类型与兼容规则
-src/bin/hub.rs               Hub 运行时
-src/bin/body.rs              原生音频 Body
-src/bin/protocol_schema.rs   schema 生成器
-docs/                        协议、要求、现状与任务卡
-schemas/                     生成的版本化 schema
-tools/                        smoke 与本地辅助工具
-desktop/tauri-host/          Tauri Host Panel
-```
+权威状态见 [当前可信项目现状](docs/ABSOLUTE_SOLVER_CURRENT_STATE.md)，原始运行证据在 `D:\11\Logs`。不要把 Hub 暴露到公网，也不要把 API key、token 或服务器密码提交到仓库。

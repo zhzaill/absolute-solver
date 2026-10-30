@@ -1,6 +1,6 @@
 # Absolute Solver 当前可信项目现状
 
-更新时间：2026-10-28（Asia/Shanghai）
+更新时间：2026-10-30（Asia/Shanghai）
 适用范围：仅 Absolute Solver 仓库、Hub/Body/Provider 运行链路及其验收证据。本文是日期快照，不代替源代码、实际运行结果和 `D:\11\Logs` 原始报告。
 
 接手开发总手册：`docs/ABSOLUTE_SOLVER_REQUIREMENTS_AND_IMPLEMENTATION.md`。其中的阶段拆分、代码入口、接口边界和验收矩阵以本快照、源代码及 `D:\11\Logs` 为事实来源。
@@ -41,6 +41,14 @@ Absolute Solver 的目标是：让同一个 Cortico Persona 通过局域网统�
 | TTS | `127.0.0.1:18080` | `/healthz` HTTP 200；upstream alive | 正式 TTS 验收通过 |
 
 ## 能力状态
+
+### 二阶段访问许可（2026-10-29）
+
+状态：**in_progress**。Hub 独立访问状态机、`access.*` WebSocket 消息、HTTP request/state/consume/result/revoke、Tauri Host 本地 Allow/Reject 面板、固定 TTS/ASR Host Agent 和 Cortico World 请求/状态工具已实现并通过隔离测试；Windows 直接启动入口已修复。服务器隔离环境已在 2026-10-30 复核后清理，生产 TTS `/healthz` 仍为 HTTP 200。目标 Host 本地确认、真实 TTS/ASR 回执尚未完成；一次启动尝试回显的生产 TTS key 仍须由服务管理端轮换并验证旧 key 失效。证据见 `docs/tasks/2026-10-29-access-grant.md` 与 `D:\11\Logs\2026-10-29-absolute-solver-access-grant.md`；不得标记 accepted。
+
+2026-10-30 补充：服务器 TTS 上游与网关按依赖顺序重启后，`18080/healthz` 返回 `ok=true, upstream_alive=true`，`9880/docs` 返回 HTTP 200。本机 Coo 原生桌宠收到测试输入“本机语音测试完成。”，产生 `tts.voice` WAV（约 2 秒），随后调用 `audio_play` 与 `audio_queue`；播放端状态为 Windows WPF MediaPlayer online、音量 80%，队列收尾为空且没有 `audio-play.failed`。这证明声音经过运行 Coo 的本机播放链路；它不替代二阶段目标 Host Allow 和跨主机 `access.result` 验收。
+
+Agent 只接受 `/v1/audio/speech` 和 `/v1/audio/transcriptions`，服务端密钥留在目标 Host；Agent 通过 `/access/claim` 唯一领取 World 已批准的来源/Host/服务/操作组合，不自行申请第二个许可；World 状态工具不返回 grant。当前 Hub/局域网仍无中心认证和加密，真实部署继续限可信 LAN。
 
 | 能力 | 状态 | 证据 |
 |---|---|---|

@@ -21,6 +21,10 @@ use serde::Serialize;
 use tokio::sync::{broadcast, mpsc, Mutex};
 
 use absolute_solver::{
+    access::{
+        AccessError, AccessManager, AccessRequest as AccessLease, AccessService, AccessStatus,
+        MAX_ACCESS_TTL_MS, MIN_ACCESS_TTL_MS,
+    },
     adapters::{decode_wav_pcm16, AdapterConfig, ModelAdapters},
     cortico::CorticoEvent,
     memory::{MemoryError, MemoryHit, MemoryStore, MemoryWriteRequest},
@@ -61,6 +65,7 @@ struct Hub {
     robotics_world_url: String,
     host_tickets: Mutex<BTreeMap<String, u64>>,
     presence: Mutex<PresenceManager>,
+    access: Mutex<AccessManager>,
     presence_hosts: BTreeSet<String>,
     presence_token: String,
     host_panel_url: String,
@@ -176,6 +181,59 @@ struct PresenceRevokeRequest {
     intent_id: String,
     #[serde(default = "default_presence_revoke_reason")]
     reason: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct AccessRequestInput {
+    request_id: String,
+    source_instance: String,
+    target_host_id: String,
+    target_service: AccessService,
+    operation: String,
+    purpose: String,
+    #[serde(default)]
+    environment_id: Option<String>,
+    ttl_ms: u64,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct AccessRevokeInput {
+    request_id: String,
+    #[serde(default)]
+    reason: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct AccessConsumeInput {
+    request_id: String,
+    grant_id: String,
+    target_host_id: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct AccessClaimInput {
+    /// The approval this call is allowed to spend. Optional so an unmodified
+    /// plugin keeps working through the single-flight tuple route; when present
+    /// it is an identity check and a mismatch is terminal.
+    #[serde(default)]
+    request_id: Option<String>,
+    source_instance: String,
+    target_host_id: String,
+    target_service: AccessService,
+    operation: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct AccessResultInput {
+    request_id: String,
+    target_host_id: String,
+    http_status: u16,
+    elapsed_ms: u64,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct AccessStateQuery {
+    request_id: String,
 }
 
 fn default_presence_revoke_reason() -> String {
@@ -755,6 +813,11 @@ impl Monitor {
             Message::PresenceDecision { .. } => ("presence.decision", None, None, 0),
             Message::PresenceGrant { .. } => ("presence.grant", None, None, 0),
             Message::PresenceRevoke { .. } => ("presence.revoke", None, None, 0),
+            Message::AccessRequest { .. } => ("access.request", None, None, 0),
+            Message::AccessDecision { .. } => ("access.decision", None, None, 0),
+            Message::AccessGrant { .. } => ("access.grant", None, None, 0),
+            Message::AccessRevoke { .. } => ("access.revoke", None, None, 0),
+            Message::AccessResult { .. } => ("access.result", None, None, 0),
             Message::TurnStarted { turn } => ("turn.started", Some(*turn), None, 0),
             Message::SegmentReceipt { turn, seq, .. } => {
                 ("segment.receipt", Some(*turn), Some(*seq), 0)
@@ -928,6 +991,19 @@ fn body_receives_message(
         Message::PresenceIntent { host_id, .. }
         | Message::PresenceGrant { host_id, .. }
         | Message::PresenceRevoke { host_id, .. } => device_id == Some(host_id.as_str()),
+        Message::AccessRequest {
+            target_host_id: host_id,
+            ..
+        }
+        | Message::AccessGrant {
+            target_host_id: host_id,
+            ..
+        }
+        | Message::AccessRevoke {
+            target_host_id: host_id,
+            ..
+        } => device_id == Some(host_id.as_str()),
+        Message::AccessDecision { .. } | Message::AccessResult { .. } => false,
         Message::PresenceDecision { .. } => false,
         _ => true,
     }
@@ -1278,6 +1354,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         robotics_world_url,
         host_tickets: Mutex::new(BTreeMap::new()),
         presence: Mutex::new(PresenceManager::default()),
+        access: Mutex::new(AccessManager::default()),
         presence_hosts: std::env::var("SOLVER_PRESENCE_HOSTS")
             .unwrap_or_default()
             .split(',')
@@ -1323,6 +1400,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/host/connect", get(host_connect))
         .route("/presence/intent", post(presence_intent))
         .route("/presence/revoke", post(presence_revoke))
+        .route("/access/request", post(access_request))
+        .route("/access/state/:request_id", get(access_state))
+        .route("/access/state", get(access_state_query))
+        .route("/access/consume", post(access_consume))
+        .route("/access/claim", post(access_claim))
+        .route("/access/result", post(access_result))
+        .route("/access/revoke", post(access_revoke))
         .with_state(AppState { hub });
     let listener = tokio::net::TcpListener::bind(&listen).await?;
     println!("Absolute Solver hub listening on {listen}");
@@ -1598,6 +1682,482 @@ async fn presence_revoke(
         .await;
     let _ = app.hub.outbound.send(message);
     (StatusCode::OK, Json(serde_json::json!({"ok":true}))).into_response()
+}
+
+async fn access_request(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<AccessRequestInput>,
+) -> axum::response::Response {
+    if !valid_presence_token(&headers, &app.hub.presence_token) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error":"unauthorized"})),
+        )
+            .into_response();
+    }
+    let expected_operation = input.target_service.operation();
+    if input.operation != expected_operation
+        || input.request_id.is_empty()
+        || input.request_id.len() > 96
+        || !input
+            .request_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        || input.source_instance.trim().is_empty()
+        || input.source_instance.chars().count() > 96
+        || input.purpose.trim().is_empty()
+        || input.purpose.chars().count() > 240
+        || input.environment_id.as_ref().is_some_and(|s| s.len() > 96)
+        || !(MIN_ACCESS_TTL_MS..=MAX_ACCESS_TTL_MS).contains(&input.ttl_ms)
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error":"invalid_access_request"})),
+        )
+            .into_response();
+    }
+    if !app.hub.presence_hosts.contains(&input.target_host_id) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error":"host_not_authorized"})),
+        )
+            .into_response();
+    }
+    let device = app
+        .hub
+        .monitor
+        .lock()
+        .await
+        .devices
+        .get(&input.target_host_id)
+        .cloned();
+    let Some(device) = device.filter(|device| device.connected) else {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error":"host_offline"})),
+        )
+            .into_response();
+    };
+    if !device
+        .caps
+        .as_ref()
+        .and_then(|caps| caps.get("host_access"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+    {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error":"host_access_unsupported"})),
+        )
+            .into_response();
+    }
+    let now = wall_ms();
+    let request = AccessLease {
+        request_id: input.request_id.clone(),
+        source_instance: input.source_instance,
+        target_host_id: input.target_host_id.clone(),
+        target_service: input.target_service,
+        operation: input.operation,
+        purpose: input.purpose.clone(),
+        environment_id: input.environment_id,
+        expires_at_ms: now.saturating_add(input.ttl_ms),
+        grant_id: None,
+        status: AccessStatus::Pending,
+        result_status: None,
+        elapsed_ms: None,
+    };
+    let request = match app.hub.access.lock().await.issue(request, now) {
+        Ok(request) => request,
+        Err(AccessError::Busy) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "error":"access_busy",
+                    "detail":"this source already holds an outstanding permission for this host and service"
+                })),
+            )
+                .into_response()
+        }
+        Err(_) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({"error":"duplicate_request"})),
+            )
+                .into_response()
+        }
+    };
+    let message = Message::AccessRequest {
+        request_id: request.request_id.clone(),
+        source_instance: request.source_instance.clone(),
+        target_host_id: request.target_host_id.clone(),
+        target_service: serde_json::to_value(request.target_service)
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .into(),
+        operation: request.operation.clone(),
+        purpose: request.purpose,
+        environment_id: request.environment_id.clone(),
+        expires_at_ms: request.expires_at_ms,
+    };
+    app.hub
+        .record(
+            "hub",
+            &message,
+            None,
+            format!(
+                "request_id={}; target={}; service={}; pending local decision",
+                request.request_id, request.target_host_id, request.operation
+            ),
+        )
+        .await;
+    let _ = app.hub.outbound.send(message);
+    (StatusCode::ACCEPTED, Json(serde_json::json!({"request_id":request.request_id,"expires_at_ms":request.expires_at_ms,"status":"pending"}))).into_response()
+}
+
+async fn access_state(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    Path(request_id): Path<String>,
+) -> axum::response::Response {
+    if !valid_presence_token(&headers, &app.hub.presence_token) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error":"unauthorized"})),
+        )
+            .into_response();
+    }
+    match app.hub.access.lock().await.get(&request_id, wall_ms()) {
+        Ok(request) => {
+            (StatusCode::OK, Json(serde_json::to_value(request).unwrap())).into_response()
+        }
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error":"unknown_request"})),
+        )
+            .into_response(),
+    }
+}
+
+async fn access_state_query(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<AccessStateQuery>,
+) -> axum::response::Response {
+    access_state(State(app), headers, Path(query.request_id)).await
+}
+
+async fn access_consume(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<AccessConsumeInput>,
+) -> axum::response::Response {
+    if !valid_presence_token(&headers, &app.hub.presence_token) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error":"unauthorized"})),
+        )
+            .into_response();
+    }
+    if !app.hub.presence_hosts.contains(&input.target_host_id) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error":"host_not_authorized"})),
+        )
+            .into_response();
+    }
+    let result = app.hub.access.lock().await.consume(
+        &input.request_id,
+        &input.grant_id,
+        &input.target_host_id,
+        wall_ms(),
+    );
+    match result {
+        Ok(request) => {
+            app.hub
+                .record_system(
+                    "access.consumed",
+                    format!(
+                        "request_id={}; grant_id={}; target={}",
+                        request.request_id, input.grant_id, request.target_host_id
+                    ),
+                )
+                .await;
+            (StatusCode::OK, Json(serde_json::to_value(request).unwrap())).into_response()
+        }
+        Err(error) => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error":format!("{error:?}")})),
+        )
+            .into_response(),
+    }
+}
+
+async fn access_claim(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<AccessClaimInput>,
+) -> axum::response::Response {
+    if !valid_presence_token(&headers, &app.hub.presence_token) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error":"unauthorized"})),
+        )
+            .into_response();
+    }
+    if !app.hub.presence_hosts.contains(&input.target_host_id)
+        || input.source_instance.trim().is_empty()
+        || input.source_instance.chars().count() > 96
+        || input.operation != input.target_service.operation()
+        || input.request_id.as_ref().is_some_and(|request_id| {
+            request_id.is_empty()
+                || request_id.len() > 96
+                || !request_id
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        })
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error":"invalid_access_route"})),
+        )
+            .into_response();
+    }
+    let device = app
+        .hub
+        .monitor
+        .lock()
+        .await
+        .devices
+        .get(&input.target_host_id)
+        .cloned();
+    if !device.is_some_and(|device| device.connected) {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error":"host_offline"})),
+        )
+            .into_response();
+    }
+    let result = app.hub.access.lock().await.claim(
+        &input.source_instance,
+        &input.target_host_id,
+        input.target_service,
+        &input.operation,
+        input.request_id.as_deref(),
+        wall_ms(),
+    );
+    match result {
+        Ok(request) => {
+            app.hub
+                .record_system(
+                    "access.consumed",
+                    format!(
+                        "request_id={}; source={}; target={}; service={}; operation={}",
+                        request.request_id,
+                        request.source_instance,
+                        request.target_host_id,
+                        serde_json::to_value(request.target_service).unwrap(),
+                        request.operation
+                    ),
+                )
+                .await;
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "request_id": request.request_id,
+                    "source_instance": request.source_instance,
+                    "target_host_id": request.target_host_id,
+                    "target_service": request.target_service,
+                    "operation": request.operation,
+                    "status": request.status,
+                    "expires_at_ms": request.expires_at_ms,
+                })),
+            )
+                .into_response()
+        }
+        Err(error) => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error":format!("{error:?}")})),
+        )
+            .into_response(),
+    }
+}
+
+async fn access_revoke(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<AccessRevokeInput>,
+) -> axum::response::Response {
+    if !valid_presence_token(&headers, &app.hub.presence_token) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error":"unauthorized"})),
+        )
+            .into_response();
+    }
+    let result = app
+        .hub
+        .access
+        .lock()
+        .await
+        .revoke(&input.request_id, wall_ms());
+    match result {
+        Ok(request) => {
+            let message = Message::AccessRevoke {
+                request_id: request.request_id.clone(),
+                target_host_id: request.target_host_id.clone(),
+                reason: input.reason.chars().take(96).collect(),
+            };
+            app.hub
+                .record(
+                    "hub",
+                    &message,
+                    None,
+                    format!("request_id={}; revoked", request.request_id),
+                )
+                .await;
+            let _ = app.hub.outbound.send(message);
+            (StatusCode::OK, Json(serde_json::json!({"ok":true}))).into_response()
+        }
+        Err(error) => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error":format!("{error:?}")})),
+        )
+            .into_response(),
+    }
+}
+
+async fn access_result(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<AccessResultInput>,
+) -> axum::response::Response {
+    if !valid_presence_token(&headers, &app.hub.presence_token) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error":"unauthorized"})),
+        )
+            .into_response();
+    }
+    let result = app.hub.access.lock().await.report_result(
+        &input.request_id,
+        &input.target_host_id,
+        input.http_status,
+        input.elapsed_ms,
+    );
+    match result {
+        Ok(request) => {
+            let message = Message::AccessResult {
+                request_id: request.request_id.clone(),
+                status: request.result_status.clone().unwrap_or_default(),
+                reason: None,
+            };
+            app.hub
+                .record(
+                    "hub",
+                    &message,
+                    None,
+                    format!(
+                        "request_id={}; target={}; status={}; elapsed_ms={}",
+                        request.request_id,
+                        request.target_host_id,
+                        request.result_status.unwrap_or_default(),
+                        request.elapsed_ms.unwrap_or_default()
+                    ),
+                )
+                .await;
+            (StatusCode::ACCEPTED, Json(serde_json::json!({"ok":true}))).into_response()
+        }
+        Err(error) => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error":format!("{error:?}")})),
+        )
+            .into_response(),
+    }
+}
+
+async fn handle_access_decision(
+    hub: &Arc<Hub>,
+    direct_tx: &mpsc::Sender<Message>,
+    connected_host: Option<&str>,
+    request_id: String,
+    host_id: String,
+    allow: bool,
+) {
+    if connected_host != Some(host_id.as_str()) {
+        send_direct_message(
+            hub,
+            direct_tx,
+            Message::ProtocolError {
+                code: "access_host_mismatch".into(),
+                message: "access decision host does not match this connection".into(),
+                fatal: false,
+            },
+            "access decision rejected",
+        )
+        .await;
+        return;
+    }
+    let result = hub
+        .access
+        .lock()
+        .await
+        .decide(&host_id, &request_id, allow, wall_ms());
+    match result {
+        Ok(request) => {
+            let decision = Message::AccessDecision {
+                request_id: request_id.clone(),
+                host_id: host_id.clone(),
+                allow,
+            };
+            hub.record(
+                "body->hub",
+                &decision,
+                None,
+                format!("request_id={request_id}; host={host_id}; allow={allow}"),
+            )
+            .await;
+            let message = if allow {
+                Message::AccessGrant {
+                    request_id: request.request_id,
+                    grant_id: request.grant_id.unwrap_or_default(),
+                    target_host_id: request.target_host_id,
+                    expires_at_ms: request.expires_at_ms,
+                }
+            } else {
+                Message::AccessResult {
+                    request_id: request.request_id,
+                    status: "denied".into(),
+                    reason: Some("target_host_denied".into()),
+                }
+            };
+            hub.record(
+                "hub",
+                &message,
+                None,
+                format!(
+                    "request_id={request_id}; status={}",
+                    if allow { "granted" } else { "denied" }
+                ),
+            )
+            .await;
+            let _ = hub.outbound.send(message);
+        }
+        Err(error) => {
+            send_direct_message(
+                hub,
+                direct_tx,
+                Message::AccessResult {
+                    request_id,
+                    status: "rejected".into(),
+                    reason: Some(format!("{error:?}")),
+                },
+                "access decision rejected",
+            )
+            .await
+        }
+    }
 }
 
 async fn handle_presence_decision(
@@ -2856,6 +3416,21 @@ async fn handle_socket(socket: WebSocket, hub: Arc<Hub>) {
                 handle_presence_decision(&hub, &direct_tx, connected_device.as_deref(), message)
                     .await;
             }
+            Message::AccessDecision {
+                request_id,
+                host_id,
+                allow,
+            } => {
+                handle_access_decision(
+                    &hub,
+                    &direct_tx,
+                    connected_device.as_deref(),
+                    request_id,
+                    host_id,
+                    allow,
+                )
+                .await;
+            }
             Message::PresenceRevoke { .. } => {
                 handle_presence_revoke(&hub, &direct_tx, connected_device.as_deref(), message)
                     .await;
@@ -2863,7 +3438,12 @@ async fn handle_socket(socket: WebSocket, hub: Arc<Hub>) {
             Message::Say { .. } => {}
             Message::RenderCue { .. } => {}
             Message::BodyHandoff { .. } => {}
-            Message::PresenceIntent { .. } | Message::PresenceGrant { .. } => {}
+            Message::PresenceIntent { .. }
+            | Message::PresenceGrant { .. }
+            | Message::AccessRequest { .. }
+            | Message::AccessGrant { .. }
+            | Message::AccessRevoke { .. }
+            | Message::AccessResult { .. } => {}
             Message::TurnStarted { .. } | Message::ProtocolError { .. } => {}
         }
     }
@@ -2897,6 +3477,22 @@ async fn handle_socket(socket: WebSocket, hub: Arc<Hub>) {
         next_connected_body(&monitor.devices, connected_device.as_deref())
     };
     if let Some(device_id) = &connected_device {
+        let cancelled = hub.access.lock().await.host_disconnected(device_id);
+        for request_id in cancelled {
+            let message = Message::AccessResult {
+                request_id: request_id.clone(),
+                status: "host_offline".into(),
+                reason: Some("target_host_disconnected".into()),
+            };
+            hub.record(
+                "hub",
+                &message,
+                None,
+                format!("request_id={request_id}; target host disconnected"),
+            )
+            .await;
+            let _ = hub.outbound.send(message);
+        }
         reassign_active_body(&hub, device_id, fallback, "active_body_disconnected").await;
     }
     hub.record_system(
@@ -3965,6 +4561,7 @@ mod tests {
                 robotics_world_url: String::new(),
                 host_tickets: Mutex::new(BTreeMap::new()),
                 presence: Mutex::new(PresenceManager::default()),
+                access: Mutex::new(AccessManager::default()),
                 presence_hosts: BTreeSet::new(),
                 presence_token: String::new(),
                 host_panel_url: "http://127.0.0.1:5274/".into(),
@@ -4207,6 +4804,174 @@ mod tests {
         let trace = tokio::fs::read_to_string(&trace_path).await.unwrap();
         assert!(trace.contains("presence.intent"));
         assert!(!trace.contains("private visit detail"));
+        drop(receiver);
+        drop(hub);
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        tokio::fs::remove_file(trace_path).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn access_flow_requires_auth_host_confirmation_and_single_use() {
+        let adapters = test_adapters(String::new(), String::new(), String::new());
+        let (mut hub, trace_path) = test_hub(adapters).await;
+        let inner = Arc::get_mut(&mut hub).expect("test hub has one owner");
+        inner.presence_token = "access-secret".into();
+        inner.presence_hosts.insert("host-a".into());
+        inner
+            .monitor
+            .get_mut()
+            .register_device("host-a", json!({"host_access":true}));
+        let mut receiver = hub.outbound.subscribe();
+        let (direct_tx, _direct_rx) = mpsc::channel(8);
+        let request = AccessRequestInput {
+            request_id: "request-1".into(),
+            source_instance: "coo".into(),
+            target_host_id: "host-a".into(),
+            target_service: AccessService::Tts,
+            operation: "speech.synthesize".into(),
+            purpose: "test voice".into(),
+            environment_id: Some("env-1".into()),
+            ttl_ms: 10_000,
+        };
+        let unauthorized = access_request(
+            State(AppState { hub: hub.clone() }),
+            HeaderMap::new(),
+            Json(AccessRequestInput {
+                request_id: request.request_id.clone(),
+                source_instance: request.source_instance.clone(),
+                target_host_id: request.target_host_id.clone(),
+                target_service: request.target_service,
+                operation: request.operation.clone(),
+                purpose: request.purpose.clone(),
+                environment_id: request.environment_id.clone(),
+                ttl_ms: request.ttl_ms,
+            }),
+        )
+        .await;
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer access-secret".parse().unwrap(),
+        );
+        let accepted = access_request(
+            State(AppState { hub: hub.clone() }),
+            headers.clone(),
+            Json(request),
+        )
+        .await;
+        assert_eq!(accepted.status(), StatusCode::ACCEPTED);
+        assert!(matches!(
+            receiver.recv().await.unwrap(),
+            Message::AccessRequest { .. }
+        ));
+        let duplicate = access_request(
+            State(AppState { hub: hub.clone() }),
+            headers.clone(),
+            Json(AccessRequestInput {
+                request_id: "request-1".into(),
+                source_instance: "coo".into(),
+                target_host_id: "host-a".into(),
+                target_service: AccessService::Tts,
+                operation: "speech.synthesize".into(),
+                purpose: "duplicate".into(),
+                environment_id: None,
+                ttl_ms: 10_000,
+            }),
+        )
+        .await;
+        assert_eq!(duplicate.status(), StatusCode::CONFLICT);
+        handle_access_decision(
+            &hub,
+            &direct_tx,
+            Some("host-a"),
+            "request-1".into(),
+            "host-a".into(),
+            true,
+        )
+        .await;
+        let Message::AccessGrant { .. } = receiver.recv().await.unwrap() else {
+            panic!("expected grant")
+        };
+        let wrong_source = access_claim(
+            State(AppState { hub: hub.clone() }),
+            headers.clone(),
+            Json(AccessClaimInput {
+                request_id: None,
+                source_instance: "other-plugin".into(),
+                target_host_id: "host-a".into(),
+                target_service: AccessService::Tts,
+                operation: "speech.synthesize".into(),
+            }),
+        )
+        .await;
+        assert_eq!(wrong_source.status(), StatusCode::CONFLICT);
+        // A carried approval is an identity check: naming somebody else's
+        // request is terminal and must not consume the one we do hold.
+        let wrong_identity = access_claim(
+            State(AppState { hub: hub.clone() }),
+            headers.clone(),
+            Json(AccessClaimInput {
+                request_id: Some("request-does-not-exist".into()),
+                source_instance: "coo".into(),
+                target_host_id: "host-a".into(),
+                target_service: AccessService::Tts,
+                operation: "speech.synthesize".into(),
+            }),
+        )
+        .await;
+        assert_eq!(wrong_identity.status(), StatusCode::CONFLICT);
+        let consumed = access_claim(
+            State(AppState { hub: hub.clone() }),
+            headers.clone(),
+            Json(AccessClaimInput {
+                request_id: Some("request-1".into()),
+                source_instance: "coo".into(),
+                target_host_id: "host-a".into(),
+                target_service: AccessService::Tts,
+                operation: "speech.synthesize".into(),
+            }),
+        )
+        .await;
+        assert_eq!(consumed.status(), StatusCode::OK);
+        assert_eq!(
+            hub.access
+                .lock()
+                .await
+                .get("request-1", wall_ms())
+                .unwrap()
+                .status,
+            AccessStatus::Consumed
+        );
+        let replay = access_claim(
+            State(AppState { hub: hub.clone() }),
+            headers.clone(),
+            Json(AccessClaimInput {
+                request_id: Some("request-1".into()),
+                source_instance: "coo".into(),
+                target_host_id: "host-a".into(),
+                target_service: AccessService::Tts,
+                operation: "speech.synthesize".into(),
+            }),
+        )
+        .await;
+        assert_eq!(replay.status(), StatusCode::CONFLICT);
+        let result = access_result(
+            State(AppState { hub: hub.clone() }),
+            headers,
+            Json(AccessResultInput {
+                request_id: "request-1".into(),
+                target_host_id: "host-a".into(),
+                http_status: 200,
+                elapsed_ms: 42,
+            }),
+        )
+        .await;
+        assert_eq!(result.status(), StatusCode::ACCEPTED);
+        let trace = tokio::fs::read_to_string(&trace_path).await.unwrap();
+        assert!(trace.contains("request-1"));
+        assert!(trace.contains("http_200"));
+        assert!(!trace.contains("test voice"));
         drop(receiver);
         drop(hub);
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;

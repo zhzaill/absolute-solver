@@ -387,6 +387,36 @@ The `presence.intent`, `presence.decision`, `presence.grant`, and
 turn. Decisions and client revokes are accepted only from the connection whose
 registered device ID matches `host_id`.
 
+### Host service access
+
+Access grants are separate from presence leases. `POST /access/request` requires
+the configured service bearer token and carries one source instance, allowlisted
+target Host, fixed service (`tts` or `asr`), matching operation, purpose,
+environment id, caller request id and a 1-120 second TTL. The target Host must be
+connected and advertise `host_access: true`. The Hub delivers `access.request`
+only to that Host. The Host answers with `access.decision`; the Hub checks the
+connection's registered Host id, emits a one-time `access.grant` or denial
+`access.result`, and exposes state only to authenticated callers. `/access/consume`
+atomically consumes a grant bound to the same Host and request. A fixed Host Agent
+uses `POST /access/claim` with its configured source instance, Host, service and
+operation; the Hub atomically consumes the sole matching unexpired granted request
+and returns its original `request_id`. Zero or multiple matches fail closed. This
+lets existing OpenAI-compatible TTS/ASR plugins work without a custom request-id
+header, while preventing the Agent from creating a second, unrelated request.
+`/access/revoke`
+invalidates a pending or granted request. Host disconnect and expiry invalidate
+unused grants. `/access/result` accepts only a numeric upstream HTTP status and
+elapsed time after grant consumption. Traces retain request/grant identifiers,
+service, outcome and duration, never request text, audio, transcription or API
+keys.
+
+The Host Agent is limited to `POST /v1/audio/speech` and
+`POST /v1/audio/transcriptions`, with configured upstream addresses. It does not
+implement a generic URL proxy or command runner. The TTS/ASR provider key stays
+on the target Host. This path still relies on the current trusted LAN and shared
+service token; the WebSocket `device_id` is not cryptographic Host
+authentication and HTTP/WS are not encrypted by this change.
+
 ### Read-only Robotics World
 
 The XuegerOS Body Adapter exposes `GET /v1/world` as a read-only projection of

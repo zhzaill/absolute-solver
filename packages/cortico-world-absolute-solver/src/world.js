@@ -62,8 +62,10 @@ export class AbsoluteSolverWorld {
   id = ID;
   last = { status: 'unknown', checkedAt: null, error: null, services: [] };
 
-  constructor({ cfg }) {
+  constructor({ cfg, secret }) {
     this.cfg = cfg;
+    this.secret = secret || (name => name === 'SOLVER_PRESENCE_TOKEN' ? process.env.SOLVER_PRESENCE_TOKEN || '' : '');
+    this.access = { last: null };
   }
 
   envPromptVars() {
@@ -74,6 +76,9 @@ export class AbsoluteSolverWorld {
       'absolute-solver.status': this.last.status === 'online'
         ? `${this.last.services.length} 项服务目录可读，最近检查 ${this.last.checkedAt || '未知'}`
         : this.last.error || '尚未读取服务目录',
+      'absolute-solver.access': this.access.last
+        ? `最近访问 ${this.access.last.targetService || '服务'}@${this.access.last.targetHostId || this.cfg?.targetHostId || 'unknown'}：${this.access.last.status}，到期 ${this.access.last.expiresAtMs || 'unknown'}`
+        : '当前没有已知的一次性访问请求。',
     };
   }
 
@@ -88,6 +93,23 @@ export class AbsoluteSolverWorld {
         properties: {},
       },
       handler: async () => this.readServices(),
+    }, {
+      name: 'solver_request_access',
+      tags: ['act'],
+      description: '向目标 Host 请求一次 TTS 或 ASR 网络访问许可。只提出请求，不提供凭据、不执行插件；需要目标机器本地用户确认。',
+      parameters: { type: 'object', additionalProperties: false, properties: {
+        targetService: { type: 'string', enum: ['tts', 'asr'] },
+        purpose: { type: 'string', maxLength: 240 },
+        environmentId: { type: 'string', maxLength: 96 },
+        ttlMs: { type: 'number', minimum: 1000, maximum: 120000 },
+      }, required: ['targetService', 'purpose'] },
+      handler: async (args) => this.requestAccess(args),
+    }, {
+      name: 'solver_access_status',
+      tags: ['read'],
+      description: '读取一次性访问许可的事实状态；不会返回 grant token。',
+      parameters: { type: 'object', additionalProperties: false, properties: { requestId: { type: 'string', maxLength: 96 } }, required: ['requestId'] },
+      handler: async ({ requestId }) => this.accessStatus(requestId),
     }];
   }
 
@@ -111,6 +133,7 @@ export class AbsoluteSolverWorld {
           { name: 'absolute-solver.projectionUrl', description: '当前 Coo 桌宠投影网页；可在同一可信 LAN 浏览器打开' },
           { name: 'absolute-solver.directoryUrl', description: '只读服务目录地址' },
           { name: 'absolute-solver.status', description: '最近一次目录读取状态' },
+          { name: 'absolute-solver.access', description: '最近一次许可状态与过期时间' },
         ],
       }],
     };
@@ -137,5 +160,82 @@ export class AbsoluteSolverWorld {
       this.last = { status: 'offline', checkedAt: null, error: error instanceof Error ? error.message : String(error), services: [] };
       return { text: `Absolute Solver 服务目录不可读：${this.last.error}`, failed: true };
     }
+  }
+
+  accessConfig() {
+    const hub = text(this.cfg?.accessHubUrl);
+    const host = text(this.cfg?.targetHostId);
+    const secretName = text(this.cfg?.accessTokenSecret) || DEFAULTS.accessTokenSecret;
+    let token = '';
+    try { token = text(this.secret(secretName)); } catch { token = ''; }
+    let broker = '';
+    let brokerToken = '';
+    try {
+      const parsed = new URL(text(this.cfg?.accessBrokerUrl));
+      if (['http:', 'https:'].includes(parsed.protocol) && !parsed.username && !parsed.password && !parsed.search && !parsed.hash) {
+        broker = parsed.toString().replace(/\/$/, '');
+      }
+    } catch { broker = ''; }
+    try { brokerToken = text(this.secret(text(this.cfg?.accessBrokerTokenSecret) || DEFAULTS.accessBrokerTokenSecret)); } catch { brokerToken = ''; }
+    try { const parsed = new URL(hub); if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error('访问 Hub 地址无效'); return { hub: hub.replace(/\/$/, ''), host, token, broker, brokerToken }; } catch { return { hub: '', host, token, broker, brokerToken }; }
+  }
+
+  /**
+   * Tell the Coo-side broker that this exact request id may be spent.
+   *
+   * `cortico-world-tts` cannot attach a request id to the call it makes, so the
+   * association has to be made here, at the only place that knows both the
+   * approval and the route. If this registration fails we must not report a
+   * usable approval to the model: a permission the tool cannot map to a call is
+   * not a permission, it is a dangling grant that will expire confusingly.
+   */
+  async registerApproval({ requestId, service, expiresAtMs }) {
+    const cfg = this.accessConfig();
+    if (!cfg.broker) return { registered: false, reason: 'broker_not_configured' };
+    if (!cfg.brokerToken) return { registered: false, reason: 'broker_secret_missing' };
+    try {
+      const response = await fetch(`${cfg.broker}/solver/approvals`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${cfg.brokerToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ requestId, service, hostId: cfg.host, expiresAtMs }),
+        signal: AbortSignal.timeout(timeoutMs(this.cfg)),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) return { registered: false, reason: text(data.error) || `HTTP ${response.status}` };
+      return { registered: true };
+    } catch (error) {
+      return { registered: false, reason: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  async requestAccess(args = {}) {
+    const cfg = this.accessConfig();
+    if (!cfg.hub || !cfg.host || !cfg.token) return { failed: true, text: '访问许可未配置：需要 Hub 地址、目标 Host 和 secret。' };
+    const service = args.targetService === 'asr' ? 'asr' : args.targetService === 'tts' ? 'tts' : '';
+    const purpose = text(args.purpose);
+    if (!service || !purpose || purpose.length > 240) return { failed: true, text: '访问服务或原因无效。' };
+    const requestId = `coo-access-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const response = await fetch(`${cfg.hub}/access/request`, { method: 'POST', headers: { authorization: `Bearer ${cfg.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ request_id: requestId, source_instance: 'cortico', target_host_id: cfg.host, target_service: service, operation: service === 'tts' ? 'speech.synthesize' : 'audio.transcribe', purpose, environment_id: text(args.environmentId) || null, ttl_ms: Math.min(120000, Math.max(1000, Number(args.ttlMs) || 30000)) }) });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) return { failed: true, text: `访问许可请求失败：${data.error || `HTTP ${response.status}`}` };
+    const registration = await this.registerApproval({ requestId: data.request_id, service, expiresAtMs: data.expires_at_ms });
+    this.access.last = { requestId: data.request_id, status: 'pending', spendable: registration.registered };
+    if (!registration.registered) {
+      // Leave the Hub request pending on purpose: it will expire on its own and
+      // the operator is never asked to approve something that cannot be spent.
+      return { requestId: data.request_id, status: 'pending', spendable: false, failed: true, text: `已向目标 Host 发出请求，但本机适配层未能登记该许可（${registration.reason}），因此它不会被使用；到期后自动失效。` };
+    }
+    return { requestId: data.request_id, status: 'pending', spendable: true, expiresAtMs: data.expires_at_ms, text: '已向目标 Host 发出一次访问请求，等待本地确认；确认后本机插件即可使用这一次。' };
+  }
+
+  async accessStatus(requestId) {
+    const cfg = this.accessConfig();
+    if (!cfg.hub || !cfg.token || !text(requestId)) return { failed: true, text: '访问许可状态未配置。' };
+    const response = await fetch(`${cfg.hub}/access/state/${encodeURIComponent(text(requestId))}`, { headers: { authorization: `Bearer ${cfg.token}` } });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) return { failed: true, text: `访问许可状态不可读：${data.error || `HTTP ${response.status}`}` };
+    const result = { requestId: data.request_id, status: data.status, targetHostId: data.target_host_id, targetService: data.target_service, operation: data.operation, expiresAtMs: data.expires_at_ms };
+    this.access.last = result;
+    return result;
   }
 }
