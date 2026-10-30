@@ -1,7 +1,7 @@
 param(
     [string] $Server = '192.168.1.166',
     [string] $User = 'zhzaill',
-    [string] $Password = '1213',
+    [string] $Password = $env:STAGE2_PASSWORD,
     [string] $HostKey = 'SHA256:mi6ruODDjDlZBosOGrVIAJ4UFTIGPYRP11eH4cNLh+M',
     [string] $LocalRoot = 'D:\11\Projects\Absolute Solver',
     [switch] $DryRun,
@@ -14,6 +14,7 @@ param(
 # 18201 (hub) / 18082 (agent) / 18084 (broker), none of which are in production use.
 
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($Password)) { throw 'Pass -Password or set STAGE2_PASSWORD; no credential is stored in this script.' }
 
 function Invoke-Remote {
     param([string] $Script, [string] $Label = '')

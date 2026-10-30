@@ -16,7 +16,8 @@ import { execFileSync } from 'node:child_process';
 
 const HOST = process.env.STAGE2_HOST || '192.168.1.166';
 const USER = process.env.STAGE2_USER || 'zhzaill';
-const PASSWORD = process.env.STAGE2_PASSWORD || '1213';
+const PASSWORD = process.env.STAGE2_PASSWORD;
+if (!PASSWORD) throw new Error('Set STAGE2_PASSWORD; no credential is stored in this script.');
 const HOSTKEY = process.env.STAGE2_HOSTKEY || 'SHA256:mi6ruODDjDlZBosOGrVIAJ4UFTIGPYRP11eH4cNLh+M';
 const HUB = `http://${HOST}:18201`;
 const AGENT = `http://${HOST}:18082`;
