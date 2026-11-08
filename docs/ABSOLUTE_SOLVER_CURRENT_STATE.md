@@ -1,5 +1,7 @@
 # Absolute Solver 当前可信项目现状
 
+> **2026-11-06 方向变更**：主线已切换为 SSH 优先（Cortico 通过 SSH 抵达设备，每台设备本地同时运行 ASR/TTS/LLM）。旧的 Presence（存在位置）与「无门权限」模型已归档到 `archive/pre-ssh-2026-11-06` 分支，不再是主线。本文以下内容是切换前的快照，仅作历史证据参考。新方向见 `docs/SOLVER_CONSTITUTION.md`、`docs/north-star.md`、`docs/tasks/2026-11-06-ssh-first-pivot.md`。
+
 更新时间：2026-10-30（Asia/Shanghai）
 适用范围：仅 Absolute Solver 仓库、Hub/Body/Provider 运行链路及其验收证据。本文是日期快照，不代替源代码、实际运行结果和 `D:\11\Logs` 原始报告。
 

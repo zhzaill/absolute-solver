@@ -1,65 +1,53 @@
 # Absolute Solver
 
-让同一个 Cortico/Coo 桌宠出现在你的电脑、手机、浏览器和树莓派上。你只需要打开一个局域网网址；桌宠页面、对话、动作和声音仍然由 Coo 原版服务提供，Absolute Solver 负责把设备连接起来。
+Cortico 的跨设备运行时：**把 Cortico 的能力投影到你的各种设备**——桌宠/对话界面、声音、工作区与工具。通过 SSH 抵达设备，每台设备本地同时运行 ASR、TTS 和 LLM。
 
-## 先看能不能用
+## 主线
 
-这是一个给自有设备使用的可信局域网项目，不是公网 SaaS。最简单的可用组合是：
+- **Cortico/DSH（大脑）** — Persona、会话、记忆、代码工作、工具选择。
+- **SSH（通道与门）** — 加密传输、主机身份校验、账户授权、端口转发。
+- **每台设备（本地算力）** — 本地同时跑 ASR / TTS / LLM，是可独立工作的感知、表达和推理节点。
+- **设备登记表（可选，事实）** — 记录地址、账户、能力和最近回执；不代理消息、不颁发临时授权。
 
-- 一台电脑运行 Cortico/Coo；
-- 一台电脑运行 Absolute Solver Hub 和 TTS；
-- 两台设备在同一个局域网；
-- Coo 的 `tts` 和 `audio-play` World 已启用。
+一句话：Cortico 用 SSH 把自己的能力投影到设备上，用设备本地的语音和模型干活，并拿回真实回执。
 
-## 五分钟试用
+## 当前状态（2026-11-06）
 
-1. 在服务器确认 TTS：打开 `http://服务器地址:18080/healthz`，看到 `"ok":true`。
-2. 在运行 Coo 的电脑启动投影入口：
+方向已切换为 SSH 优先：
 
-   ```powershell
-   node tools/host-projection.mjs
-   ```
+- 旧的 Hub / Presence（存在位置）/ 无门权限实现已归档到 `archive/pre-ssh-2026-11-06` 分支，不再是主线；
+- SSH 传输与设备本地 ASR/TTS/LLM 调用的最小实现**尚未落地**，`main` 当前只是干净基线。
 
-3. 在同一台电脑或手机打开：
+详见 [宪法](docs/SOLVER_CONSTITUTION.md)、[North Star](docs/north-star.md) 和 [方向切换任务卡](docs/tasks/2026-11-06-ssh-first-pivot.md)。
 
-   ```text
-   http://运行Coo的电脑地址:18111/
-   ```
+## 网络：局域网直连 + Tailscale 广播
 
-4. 页面就是 Coo 原版桌宠页面。点桌宠的对话按钮，输入一句话；Coo 的原版 TTS 会生成 `tts.voice`，`audio-play` 会在运行 Coo 的这台设备上播放。
+- **局域网直连**：同网设备直接访问 `https://<局域网IP>:18112`（自签证书）。
+- **Tailscale 广播**：运行 `node tools/host-projection.mjs` 后，再 `node tools/tailscale-broadcast.mjs`，tailnet 内用有效证书访问 `https://<machine>.<tailnet>.ts.net/`；`--reset` 撤销。
+- **SSH**：`device.host` 可填局域网 IP、`100.x` Tailscale IP 或 MagicDNS 名。
 
-5. 查看服务是否在线：打开同一地址的 `/services`。
+## 主界面：Live2D 面对面
 
-第一次播放前，先在页面点一下或按一下键，让浏览器解锁声音。手机浏览器可以播放声音；原版语音输入需要 HTTPS，普通 HTTP 局域网地址不能申请麦克风。
+```powershell
+node tools/sync-face-assets.mjs   # 首次：从 Coo 复制图包/kit/转换器
+node tools/host-projection.mjs
+```
 
-## 这套东西负责什么
+浏览器打开 `https://<IP>:18112/`（本机也可 `http://127.0.0.1:18111/`）：
 
-- **Coo/Cortico**：Persona、对话、记忆、桌宠形象、动作、TTS 语义和插件。
-- **Hub**：设备连接、回合、音频路由、一次性访问许可和运行事实。
-- **Body/投影页面**：播放声音、显示 Coo、报告设备状态。
-- **服务目录**：只读展示 Cortico、Coo、TTS、ASR、LLM 等真实服务状态。
+- `/` = **第一界面：Cortico 对话**。只有消息、输入框、麦克风；设置键不投影，模型/TTS/ASR 都在主机侧。
+- `/figure` = **第二界面：Live2D 人物**。一个按键都没有，自己收表情指令与 TTS 音频。
+- **复用 Coo 图包渲染**（Cubism Core + `backends/live2d.js` + `kit/body.js`），不自研引擎；同源、非 iframe；按窗口大小自适应取景。
+- **SSE 下行 + HTTPS 上行**，两个界面接同一个 Cortico/Coo Persona。
+- **兼容桌宠**：旧页仍在 `/pet`；可选的桌面悬浮窗 `node tools/face-window.mjs`（透明/无边框/置顶/穿透），网页仍是主线。
+- 模型导入走 API（`POST /face/models/import-path`），开源时与一键导入插件对接。
 
-投影层不重画大肥鱼，不复制 Coo 的聊天框、动作词表或 Persona。打开网页看到的就是 Coo 原版桌宠。
+## 原则
 
-## 二阶段访问许可
-
-仓库里的 `access.*`、Host Agent 和 `cortico-world-absolute-solver` 已通过自动化测试。真实跨主机 TTS/ASR 仍需要目标机器前的人点击一次 Allow，因此当前不能称为生产验收通过，也不会自动替换你现在已经能用的直连 TTS。
-
-想先自己检查访问许可合同，双击 `tools/stage2-rehearse.cmd`。它只使用本机临时模拟服务，不会连接生产 Hub、服务器或 TTS。
-
-## 常见问题
-
-**页面能开但没有声音**
-
-在运行 Coo 的电脑确认 `audio-play` 为 active、播放后端为 Windows WPF MediaPlayer，并在页面先点一下。再看 Cortico 的 World 状态：`tts` 应显示 online，`audio-play` 应显示本机扬声器 online。
-
-**服务器刚睡醒，TTS 不响应**
-
-先访问 `/healthz`。如果不是 `"ok":true`，重启服务器上的 TTS 上游和网关任务，再等待模型加载完成；第一次合成可能需要几十秒。
-
-**手机能看但不能录音**
-
-这是浏览器安全规则。给投影入口配置 HTTPS 并让手机信任证书，或者先用 Coo 本机桌面窗口输入文字。
+- **复用优先**：`ssh`/`scp`/`rsync`/端口转发、设备自带的服务管理、Cortico 既有能力；不重写传输和认证。
+- **一台设备一个本地栈**：ASR、TTS、LLM 在设备上同时运行，不集中到单机。
+- **权限就是账户权限**：由 SSH 账户在操作系统和 sudo 策略中的实际权限决定；Solver 不放大、不绕过。高风险动作沿用操作系统或 Cortico 的确认。
+- **回执必须真实**：成功、失败、超时都来自真实 SSH 会话的退出码和输出。
 
 ## 开发与验证
 
@@ -71,4 +59,4 @@ cargo test
 node --test tools/*.test.mjs packages/cortico-world-absolute-solver/test/world.test.mjs
 ```
 
-权威状态见 [当前可信项目现状](docs/ABSOLUTE_SOLVER_CURRENT_STATE.md)，原始运行证据在 `D:\11\Logs`。不要把 Hub 暴露到公网，也不要把 API key、token 或服务器密码提交到仓库。
+原始运行证据在 `D:\11\Logs`。不要把 API key、token、服务器密码或私钥提交到仓库。

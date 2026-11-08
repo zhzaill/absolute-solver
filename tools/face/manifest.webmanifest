@@ -1,0 +1,16 @@
+{
+  "name": "Absolute Solver · 面对面",
+  "short_name": "Solver",
+  "description": "Live2D 面对面窗口：上半身角色 + 对话 + 语音输入，接同一个 Cortico Persona。",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "fullscreen"],
+  "orientation": "portrait-primary",
+  "background_color": "#0b0d14",
+  "theme_color": "#0b0d14",
+  "icons": [
+    { "src": "/face/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/face/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

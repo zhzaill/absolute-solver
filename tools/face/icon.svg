@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Absolute Solver">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="34%" r="72%">
+      <stop offset="0" stop-color="#1e2a4d"/>
+      <stop offset="0.6" stop-color="#131829"/>
+      <stop offset="1" stop-color="#07090f"/>
+    </radialGradient>
+    <linearGradient id="ink" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7cc4ff"/>
+      <stop offset="1" stop-color="#b58cff"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <path d="M256 118 372 386H316L256 244 196 386H140Z" fill="url(#ink)"/>
+  <circle cx="256" cy="196" r="20" fill="#0b0d14"/>
+  <circle cx="256" cy="196" r="9" fill="#eef1f8"/>
+  <path d="M214 316h84" stroke="#0b0d14" stroke-width="16" stroke-linecap="round"/>
+</svg>

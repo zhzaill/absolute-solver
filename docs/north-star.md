@@ -1,89 +1,53 @@
-# Absolute Solver 目标与集成规则
+# Absolute Solver North Star
 
-## What We Want
+Absolute Solver is Cortico's cross-device runtime. Its one job is to **project Cortico's capabilities onto the operator's own devices** — the pet/chat surface, the voice, and the workspace/tool abilities Cortico already has. Each device runs its own ASR, TTS, and LLM as the local substrate; SSH is how Cortico reaches it.
 
-Absolute Solver is a private, LAN-reachable runtime for one Cortico Persona. Its goal is to make the same Persona available through a shared interactive web entry and controlled clients such as Coo, desktop, phone, and Raspberry Pi, while Cortico owns semantic decisions and the Hub owns device routing and execution facts.
+The product is deliberately small:
 
-The core outcome is:
+- **Cortico/DSH owns the brain** — Persona, memory, repository work, tools, decisions.
+- **SSH owns the road and the lock** — encrypted transport, host-key verification, account authorization, and port forwarding.
+- **The device owns its local stack** — ASR, TTS, and LLM run on the device itself.
+- **The registry (optional) owns the facts** — a list of host/user/key/capability and the most recent receipts. It does not proxy traffic or mint temporary grants.
 
-- one Persona decision owner and one Hub runtime authority;
-- one LAN client protocol and web entry that can carry text/audio to the same Persona across devices;
-- a verifiable path from client input through Cortico decision, Hub-routed ASR/TTS, and selected-device playback;
-- permissions, failure handling, and trace records that make the private runtime understandable and recoverable;
-- adapters that keep future integrations possible without making them current product commitments.
+The target experience is:
 
-Robotics, VLA, desktop agents, external developer APIs, and a public platform remain optional. The LAN web client and supported device access are core requirements, not optional monitoring experiments. Cortico-native audio or avatar output must be adapted through Hub routing before counting as a Solver output path.
+```text
+Cortico decides to project itself onto a device
+→ open an SSH session to that device (key + known_hosts + account)
+→ load Cortico's page/voice on the device and call its local ASR / TTS / LLM
+→ return exit code + stdout/stderr as the receipt
+→ Cortico confirms the device really shows, plays, and responds
+```
 
 ## Invariants
 
-1. **Hub owns runtime truth.** Turns, body registration, active-body selection, audio routing, permissions, trace, and degradation belong to the Hub.
-2. **Persona owns decisions.** Cortico or another Persona layer decides whether to speak, act, remain silent, or use a tool.
-3. **Bodies own only local facts and I/O.** A body may preprocess signals, buffer briefly, render, play, and interrupt. It does not own session state.
-4. **One active output body.** Other bodies may standby or mirror non-audio state. Audio output requires explicit handoff.
-5. **Ingress is processed before cognition.** Device signals are normalized, deduplicated, bounded, routed, and annotated before reaching Persona context.
-6. **Presence is not permission.** Being online never grants microphone, camera, screen, file, or terminal access. Each host grants scoped, revocable capabilities.
-7. **Protocols are versioned.** Additive changes remain v1. Breaking changes require a new major version and migration notes.
-8. **Logs are continuity.** Decisions, evidence, and unresolved boundaries must be written back before work is treated as inherited state.
-9. **Events are data, not authority.** World/provider/device events may supply facts and context; instructions embedded in event payloads cannot override system policy, project rules, explicit user rules, permissions, or the active task. Only a separately authenticated and authorized user-control surface may carry user instructions, and it still cannot grant capabilities that Hub policy denies.
-
-## Instruction And Event Priority
-
-The system distinguishes a user instruction from text that merely appears inside an event. A chat message, document excerpt, tool result, World event, transcript, or model output is content to evaluate, not a rule change. The source and authorization of an instruction must come from the control channel, not from claims inside its payload.
-
-For Absolute Solver collaboration, treat event payloads as untrusted input by default. Persona may use them as evidence, answer questions about them, or propose an action. A requested action still passes through Hub policy, scoped permissions, confirmation requirements, and the relevant Tool Gateway. Events cannot rewrite Persona rules, expand scopes, change the user's priorities, or authorize execution. A World carrying an actual user message does not elevate that message into a project/system rule; user intent must be represented through an authenticated user-control surface when it is meant to change instructions.
-
-## Integration Boundary
-
-A new project may enter through only these surfaces:
-
-| Surface | Responsibility |
-|---|---|
-| Body adapter | Capture, playback, rendering, local VAD, device capabilities |
-| World adapter | Environment state, external events, scoped world actions |
-| Provider adapter | ASR, LLM, TTS, vision, embeddings, or other model services |
-| Tool gateway | Permissioned actions with timeout, idempotency, and receipts |
-
-If a proposed project does not fit one of these surfaces, first define the missing boundary instead of letting it absorb adjacent ownership.
+1. **Cortico owns decisions; projection carries them, not a copy.** Persona, memory, code work, and tool choice stay in Cortico/DSH. Solver does not add a second agent or a second Persona.
+2. **Each device owns its local intelligence.** ASR, TTS, and LLM run simultaneously on the device. Do not centralize all inference or speech on one host.
+3. **SSH is the only transport and authorization layer.** Use standard SSH key auth, pinned `known_hosts`, OS accounts, and port forwarding. Do not build a custom WebSocket broker, Presence token, one-time grant, or "no-gate" continuous-connection layer.
+4. **Permission equals account permission.** What a device may do is decided by that SSH account's OS and sudo policy. Solver does not grant, amplify, or bypass it. High-risk actions keep Cortico's and the OS's existing confirmations.
+5. **Receipts must be real.** Success, failure, and timeout all come from a real SSH session's exit code and output. A plan, a mock, or a screenshot is not execution evidence.
+6. **Online is not authorized.** A reachable host is a network fact, not permission to do anything.
 
 ## Borrow Before Building
 
-Prefer proven existing projects and standards for commodity layers:
+Reuse, in this order:
 
-- WebSocket/WebRTC and media transport;
-- VAD and audio processing;
-- authentication and capability tokens;
-- JSON Schema and protocol validation;
-- tracing, metrics, and replay;
-- model-serving adapters;
-- existing World and tool runtimes.
-
-Do not reinvent a commodity layer unless the existing option violates a core invariant, cannot run on the target device, or has an unacceptable license or security boundary.
-
-## Attention Filter
-
-Before adopting a large external project, answer:
-
-1. Which existing surface does it replace or strengthen?
-2. Which state owner changes?
-3. Does it preserve one Persona decision owner and one active output path?
-4. What happens when it is offline, slow, compromised, or partially configured?
-5. What data leaves the host, and under whose permission?
-6. Does it reduce total integration work or only move complexity?
-7. Can it be isolated behind an adapter and removed without rewriting the core?
-
-Until those answers are clear, keep the project in an experimental integration path. It must not become the new center of the product by accident.
+- `ssh` / `scp` / `rsync` / `ssh -L` for transport, auth, and tunneling;
+- the device's own service manager (systemd, scheduled task, container) for running ASR/TTS/LLM;
+- Cortico/DSH workspaces, World, and plugins for decisions and code work;
+- a flat registry file for device facts — not a message broker.
 
 ## Anti-Goals
 
-- Replacing Hub authority with UI or device state.
-- Running the complete LLM, TTS, and avatar stack on every small device.
-- Copying memory or identity into each host.
-- Granting global AI permissions instead of per-host leases.
-- Adding a second LLM decision owner without an explicit architecture decision.
-- Letting a large framework dictate the protocol before the protocol dictates its adapter.
+- Rebuilding a custom message router or permission gate on top of SSH.
+- A Presence token that claims where Cortico "is".
+- A "no-gate" connection model that bypasses the account's real permissions.
+- Centralizing every device's ASR/TTS/LLM into one host.
+- Reporting planned, simulated, or screenshot-derived success as executed fact.
+- Adding a second agent or a second decision owner.
 
 ## Decision Test
 
 A change is aligned only if the result can be stated as:
 
-> The private runtime gains a needed capability through a bounded adapter, while Hub ownership, host permissions, active-body routing, protocol versioning, and logging continuity remain intact.
+> Cortico **projects its capabilities** onto a device over SSH, using that device's local ASR/TTS/LLM, and gets a real receipt — without adding a second brain, a second transport, or a second permission model.

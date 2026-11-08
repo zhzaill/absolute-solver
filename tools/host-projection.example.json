@@ -4,6 +4,32 @@
   "cooBaseUrl": "http://127.0.0.1:7797",
   "corticoBaseUrl": "http://127.0.0.1:17788",
   "hubBaseUrl": "http://127.0.0.1:18100",
+  "tls": {
+    "enabled": true,
+    "port": 18112,
+    "commonName": "absolute-solver.local"
+  },
+  "network": {
+    "lan": true,
+    "tailscale": { "enabled": true }
+  },
+  "device": {
+    "enabled": false,
+    "host": "192.168.1.166",
+    "port": 22,
+    "user": "your-ssh-user",
+    "identityFile": "C:/Users/you/.ssh/id_ed25519",
+    "knownHostsFile": "C:/Users/you/.ssh/known_hosts",
+    "strictHostKeyChecking": "yes",
+    "remoteHost": "127.0.0.1",
+    "tunnels": {
+      "coo": { "remotePort": 7797, "localPort": 27797 },
+      "cortico": { "remotePort": 17788, "localPort": 27788 },
+      "asr": { "remotePort": 9881, "localPort": 29881 },
+      "tts": { "remotePort": 18080, "localPort": 28080 },
+      "llm": { "remotePort": 18081, "localPort": 28081 }
+    }
+  },
   "host": {
     "id": "solver-host",
     "name": "Solver Host",

@@ -1,0 +1,10 @@
+{
+  "name": "absolute-solver-face-window",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Frameless transparent always-on-top window for the /figure projection.",
+  "main": "main.cjs",
+  "devDependencies": {
+    "electron": "^45.2.3"
+  }
+}

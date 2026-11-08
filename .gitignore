@@ -20,6 +20,15 @@
 /tools/gen-stage-importmap.mjs
 /tools/host-projection.local.json
 /tools/node_modules/
+/tools/certs/
+/tools/.speaker-state.json
+# Live2D face assets are synced from the Coo install by tools/sync-face-assets.mjs.
+/tools/face/live2d/
+/tools/face/import/
+/tools/face/build/
+/tools/face/models.json
+/tools/face-window/node_modules/
+/tools/face-window/package-lock.json
 /*.b64
 /DEPLOY*
 /MANUAL_DEPLOY.md
@@ -41,6 +50,7 @@
 /.agents/
 /.aws/
 /.codex/
+/.claude/
 
 # Generated/runtime assets
 *.exe
