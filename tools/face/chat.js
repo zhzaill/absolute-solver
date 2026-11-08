@@ -81,6 +81,10 @@ els.input.addEventListener('keydown', (event) => {
 });
 
 els.mic.addEventListener('click', async () => {
+  if (!asrReady && !recorder.recording) {
+    await probeMic();
+    return;
+  }
   try {
     if (recorder.recording) {
       const text = await recorder.stop();
@@ -98,19 +102,42 @@ els.mic.addEventListener('click', async () => {
   }
 });
 
+let asrReady = true;
+
 if (!window.isSecureContext) {
   els.mic.disabled = true;
   setHint('语音输入需要 HTTPS 或 localhost');
+}
+
+// Ask the browser for the microphone even when the host ASR is not up yet, so
+// the permission prompt can appear and the block is visible in the hint line.
+async function probeMic() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach((track) => track.stop());
+    setHint('麦克风已授权 · 主机 ASR 未就绪，暂时无法转写');
+  } catch (error) {
+    setHint(error?.name === 'NotAllowedError'
+      ? '浏览器未允许麦克风：请在地址栏的站点设置里允许后重试'
+      : `麦克风不可用：${error.message}`);
+  }
 }
 
 (async () => {
   try {
     const response = await fetch('/face/status', { cache: 'no-store' });
     const data = await response.json();
-    if (data.asr === 'offline') {
-      els.mic.disabled = true;
-      setHint('主机 ASR 当前不可用，文字对话仍可用');
+    if (data.asr !== 'online') {
+      asrReady = false;
+      setHint('主机 ASR 未就绪 · 点麦克风可先授予浏览器权限');
     }
   } catch { /* ignore */ }
+  try {
+    const state = await navigator.permissions?.query({ name: 'microphone' });
+    if (state?.state === 'denied') setHint('浏览器已拒绝麦克风：请在地址栏的站点设置里允许后重试');
+    state?.addEventListener?.('change', () => {
+      if (state.state === 'denied') setHint('浏览器已拒绝麦克风：请在地址栏的站点设置里允许后重试');
+    });
+  } catch { /* permission API unsupported */ }
   client.connect();
 })();
